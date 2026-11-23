@@ -349,8 +349,10 @@ dialin::ProfileSpec DialInPlugin::toSpec(const Profile &profile) {
 // ---------------------------------------------------------------- routes
 
 void DialInPlugin::attachRoutes(AsyncWebServer &server) {
-    server.on("/dialin", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/dialin/"); });
-    server.on("/dialin/", HTTP_GET, [this](AsyncWebServerRequest *request) { serveIndex(request); });
+    // Exact matchers: a plain "/dialin" route also matches "/dialin/..." on the real
+    // server (backward-compatible matching), which made the redirect loop forever.
+    server.on(AsyncURIMatcher::exact("/dialin"), HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/dialin/"); });
+    server.on(AsyncURIMatcher::exact("/dialin/"), HTTP_GET, [this](AsyncWebServerRequest *request) { serveIndex(request); });
     if (fs::FS *fs = storage()) {
         server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-cache");
     }
