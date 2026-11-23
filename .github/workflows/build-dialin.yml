@@ -30,11 +30,19 @@ jobs:
         run: pio test -e native -f test_dialin_safety
       - name: Test app logic
         run: cd dialin-app && npm test
+      - name: Tag the GaggiMate base version
+        # Forks don't copy tags. GaggiMate's update checker parses the version
+        # (git describe) at start-up and crashes on a bare commit hash, so give
+        # the v1.9.0 base commit its tag: the build becomes v1.9.0-N-g<sha>.
+        run: git tag -f v1.9.0 43d2a7b
+      - run: mkdir -p out
       - name: Build display firmware
         run: |
           python3 scripts/embed_dialin_app.py
           pio run -e display
-          mkdir -p out
+          grep -E 'BUILD_GIT_VERSION "v[0-9]+\.[0-9]+\.[0-9]+' src/version.h || { echo "Bad firmware version:"; cat src/version.h; exit 1; }
+          cat src/version.h
+          cp .pio/build/display/firmware.elf out/display-firmware.elf 2>/dev/null || true
           cp .pio/build/display/firmware.bin out/display-firmware.bin
           cp .pio/build/display/partitions.bin out/display-partitions.bin
           cp .pio/build/display/bootloader.bin out/display-bootloader.bin
