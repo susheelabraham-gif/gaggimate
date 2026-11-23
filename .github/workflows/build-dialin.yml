@@ -32,6 +32,7 @@ jobs:
         run: cd dialin-app && npm test
       - name: Build display firmware
         run: |
+          python3 scripts/embed_dialin_app.py
           pio run -e display
           mkdir -p out
           cp .pio/build/display/firmware.bin out/display-firmware.bin
@@ -51,4 +52,4 @@ jobs:
           tag="dialin-build-${{ github.run_number }}"
           gh release create "$tag" out/* --target "${{ github.sha }}" --prerelease \
             --title "Dial-in build ${{ github.run_number }}" \
-            --notes "Flash boot_app0.bin at 0xe000 and display-firmware.bin at 0x10000. Copy the dialin folder from dialin-sdcard.zip to the SD card. See dialin-app/README.md."
+            --notes "Flash boot_app0.bin at 0xe000 and display-firmware.bin at 0x10000. The app is built in and copied to the SD card on start-up. See dialin-app/README.md."

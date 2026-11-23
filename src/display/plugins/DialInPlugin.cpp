@@ -9,6 +9,7 @@
 #include <display/core/PluginManager.h>
 #include <display/core/ProfileManager.h>
 #include <display/models/profile.h>
+#include <display/plugins/dialin/app_bundle.h>
 
 static constexpr const char *TAG = "DialInPlugin";
 static constexpr const char *ROOT_DIR = "/dialin";
@@ -127,7 +128,7 @@ const char *FALLBACK_PAGE =
     "<!doctype html><meta name=viewport content='width=device-width'><title>Dial-in</title>"
     "<body style='font-family:sans-serif;max-width:32em;margin:2em auto;padding:0 1em'>"
     "<h1>Dial-in app not installed</h1><p>The Dial-in plugin is running, but the app files were not found on the SD card.</p>"
-    "<p>Copy the <code>www</code> folder from the release to <code>/dialin/www/</code> on the card, then reload.</p></body>";
+    "<p>The firmware copies them onto the card when it starts. Check that an SD card is fitted, then restart the machine.</p></body>";
 
 } // namespace
 
@@ -137,6 +138,7 @@ void DialInPlugin::setup(Controller *_controller, PluginManager *_pluginManager)
     controller = _controller;
     pluginManager = _pluginManager;
     loadLimits();
+    installApp();
     ESP_LOGI(TAG, "Dial-in plugin %s ready (storage: %s)", DIALIN_PLUGIN_VERSION, storage() ? "yes" : "no SD card");
 }
 
@@ -160,6 +162,60 @@ bool DialInPlugin::isValidName(const String &name) {
             return false;
     }
     return true;
+}
+
+// ---------------------------------------------------------------- app files
+
+// Copies the web app built into the firmware onto the card when the card holds
+// a different version (or none). Files the user added are left alone.
+void DialInPlugin::installApp() {
+    fs::FS *fs = storage();
+    if (fs == nullptr)
+        return;
+    const String marker = String(WWW_DIR) + ".version";
+    if (fs->exists(marker)) {
+        File m = fs->open(marker, "r");
+        String current = m ? m.readString() : String();
+        if (m)
+            m.close();
+        current.trim();
+        if (current == dialin_app::VERSION)
+            return;
+    }
+    size_t written = 0;
+    for (size_t i = 0; i < dialin_app::FILE_COUNT; i++) {
+        const auto &file = dialin_app::FILES[i];
+        String path = String(WWW_DIR) + file.path;
+        String dir = path.substring(0, path.lastIndexOf('/'));
+        if (!ensureDir(*fs, dir)) {
+            ESP_LOGW(TAG, "Could not create %s", dir.c_str());
+            return;
+        }
+        String tmp = path + ".tmp";
+        File f = fs->open(tmp, "w");
+        if (!f) {
+            ESP_LOGW(TAG, "Could not write %s", tmp.c_str());
+            return;
+        }
+        size_t n = f.write(file.data, file.size);
+        f.close();
+        if (n != file.size) {
+            fs->remove(tmp);
+            ESP_LOGW(TAG, "Short write for %s", path.c_str());
+            return;
+        }
+        if (fs->exists(path))
+            fs->remove(path);
+        fs->rename(tmp.c_str(), path.c_str());
+        written += n;
+    }
+    File m = fs->open(marker, "w");
+    if (m) {
+        m.print(dialin_app::VERSION);
+        m.close();
+    }
+    ESP_LOGI(TAG, "Installed Dial-in app %s (%u files, %u bytes)", dialin_app::VERSION, (unsigned)dialin_app::FILE_COUNT,
+             (unsigned)written);
 }
 
 // ---------------------------------------------------------------- limits
@@ -336,6 +392,7 @@ void DialInPlugin::handleStatus(AsyncWebServerRequest *request) {
     doc["sdCard"] = controller->isSDCard();
     doc["storage"] = fs != nullptr;
     doc["appInstalled"] = fs != nullptr && fs->exists(INDEX_PATH);
+    doc["appVersion"] = dialin_app::VERSION;
     doc["busy"] = controller->isActive();
     if (controller->isSDCard()) {
         doc["totalBytes"] = (double)SD_MMC.totalBytes();

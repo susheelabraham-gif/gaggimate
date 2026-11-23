@@ -37,12 +37,12 @@ to anyone using that browser; use a key with a spending limit.
 ## Install
 
 You need Chrome or Edge on a computer, a USB-C cable to the display, and the
-build files from GitHub: your fork → **Actions** → the latest green
-**build-dialin** run → **Artifacts** → `gaggimate-dialin-firmware`.
+build files from your fork's **Releases** page ("Dial-in build N").
 
-1. **Copy the app to the SD card.** Unzip `dialin-sdcard.zip` and copy its
-   `dialin` folder to the root of the card, so the card has
-   `/dialin/www/index.html`.
+1. **No card copying needed.** The app is built into the firmware; on start-up
+   the display copies it to `/dialin/www/` on the SD card whenever the card has
+   a different version. (`dialin-sdcard.zip` is still provided if you prefer to
+   copy it yourself.)
 2. **Connect the display** to the computer by USB.
 3. Open https://espressif.github.io/esptool-js/ in Chrome, set the baud rate to
    921600 and click **Connect**, then pick the display's port. If it won't
@@ -66,7 +66,8 @@ Do not install GaggiMate updates from its web UI while you run this edition:
 an official update replaces the firmware and removes the Dial-in plugin (your
 data on the SD card stays).
 
-To update the app later, replace `/dialin/www/` on the card; no flashing needed.
+Flashing a newer build also updates the app on the card. After editing the app, run
+`python3 scripts/embed_dialin_app.py` to refresh the copy built into the firmware.
 
 ## Machine API added by the plugin
 

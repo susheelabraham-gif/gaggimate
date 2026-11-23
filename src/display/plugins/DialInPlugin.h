@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.2.0"
+#define DIALIN_PLUGIN_VERSION "0.2.1"
 
 class DialInPlugin : public Plugin {
   public:
@@ -37,6 +37,7 @@ class DialInPlugin : public Plugin {
 
   private:
     fs::FS *storage() const; // SD card, or nullptr when none is fitted
+    void installApp();
     void loadLimits();
     bool saveLimits();
 
