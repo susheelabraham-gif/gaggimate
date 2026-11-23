@@ -16,11 +16,31 @@ starts a shot.
 
 ## Install
 
-1. **Flash the firmware** (`display-firmware.bin`) to the display. Only the app
-   partition changes; profiles and shots on the SD card are untouched.
-2. **Copy the app**: unzip `dialin-sdcard.zip` and copy its `dialin` folder to
-   the root of the SD card, so the card has `/dialin/www/index.html`.
-3. Open GaggiMate's web UI and choose **Dial-in** in the menu.
+You need Chrome or Edge on a computer, a USB-C cable to the display, and the
+build files from GitHub: your fork → **Actions** → the latest green
+**build-dialin** run → **Artifacts** → `gaggimate-dialin-firmware`.
+
+1. **Copy the app to the SD card.** Unzip `dialin-sdcard.zip` and copy its
+   `dialin` folder to the root of the card, so the card has
+   `/dialin/www/index.html`.
+2. **Connect the display** to the computer by USB.
+3. Open https://espressif.github.io/esptool-js/ in Chrome, set the baud rate to
+   921600 and click **Connect**, then pick the display's port. If it won't
+   connect, hold the BOOT button (SW1) while plugging the cable in.
+4. Add two files, and nothing else:
+   - `0xe000` → `boot_app0.bin`
+   - `0x10000` → `display-firmware.bin`
+5. Click **Program**. Do not click **Erase Flash**: that would wipe Wi-Fi and
+   settings.
+6. Unplug and replug the display, open GaggiMate's web UI and choose
+   **Dial-in** in the menu.
+
+`boot_app0.bin` makes the display start from the slot you just wrote. Without
+it, a display that last updated over the air keeps starting the old firmware.
+Settings, Wi-Fi, profiles and shots are not touched.
+
+To go back to official GaggiMate, use the normal flasher on
+https://docs.gaggimate.eu/docs/flashing.
 
 Do not install GaggiMate updates from its web UI while you run this edition:
 an official update replaces the firmware and removes the Dial-in plugin (your
