@@ -354,7 +354,10 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
     server.on(AsyncURIMatcher::exact("/dialin"), HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/dialin/"); });
     server.on(AsyncURIMatcher::exact("/dialin/"), HTTP_GET, [this](AsyncWebServerRequest *request) { serveIndex(request); });
     if (fs::FS *fs = storage()) {
-        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-cache");
+        // no-store: the app files are written at start-up before the clock is set, so
+        // every version gets the same timestamp and the server's timestamp-based ETag
+        // would tell browsers an old cached copy is still current.
+        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-store");
     }
 
     server.on("/api/dialin/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus(request); });
