@@ -34,7 +34,11 @@ jobs:
         # Forks don't copy tags. GaggiMate's update checker parses the version
         # (git describe) at start-up and crashes on a bare commit hash, so give
         # the v1.9.0 base commit its tag: the build becomes v1.9.0-N-g<sha>.
-        run: git tag -f v1.9.0 43d2a7b
+        # Drop this workflow's own release tags so git describe can't pick them.
+        run: |
+          git tag -l 'dialin-build-*' | xargs -r git tag -d
+          git tag -f v1.9.0 43d2a7b
+          git describe --tags --dirty --exclude nightly --exclude db
       - run: mkdir -p out
       - name: Build display firmware
         run: |
