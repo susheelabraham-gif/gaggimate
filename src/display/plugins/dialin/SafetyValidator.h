@@ -22,8 +22,8 @@ struct HardLimits {
     static constexpr float maxTemperature = 96.0f;         // °C
     static constexpr float minFlow = 0.5f;                 // g/s
     static constexpr float maxFlow = 4.0f;                 // g/s
-    static constexpr float maxPhaseDuration = 60.0f;       // s
-    static constexpr float maxTotalDuration = 60.0f;       // s
+    static constexpr float maxPhaseDuration = 90.0f;       // s (default below is 60)
+    static constexpr float maxTotalDuration = 90.0f;       // s (default below is 60)
     static constexpr float maxYield = 100.0f;              // g (a sanity bound, not a safety one; default below is 60)
     static constexpr float maxSalamiCupWater = 30.0f;      // ml pumped per salami cup
     static constexpr float maxSalamiWater = 100.0f;        // ml pumped for a whole salami shot

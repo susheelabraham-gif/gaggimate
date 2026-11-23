@@ -191,6 +191,20 @@ void test_yield_ceiling_is_100g() {
     TEST_ASSERT_FALSE(validate(p, user).empty()); // capped at 100 g
 }
 
+void test_time_ceiling_is_90s() {
+    SafetyLimits user;
+    user.maxTotalDuration = 90;
+    user.maxPhaseDuration = 90;
+    auto p = goodProfile();
+    p.phases[1].duration = 75;
+    TEST_ASSERT_EQUAL(0, validate(p, user).size());
+    TEST_ASSERT_FALSE(validate(p, SafetyLimits{}).empty()); // default stays 60 s
+    user.maxTotalDuration = 120;
+    user.maxPhaseDuration = 120;
+    p.phases[1].duration = 100;
+    TEST_ASSERT_FALSE(validate(p, user).empty()); // capped at 90 s
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_good_profile_passes);
@@ -209,5 +223,6 @@ int main() {
     RUN_TEST(test_salami_cups_need_water_stop_and_limits);
     RUN_TEST(test_normal_profile_still_needs_yield_stop);
     RUN_TEST(test_yield_ceiling_is_100g);
+    RUN_TEST(test_time_ceiling_is_90s);
     return UNITY_END();
 }

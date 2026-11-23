@@ -183,6 +183,7 @@ const LIMIT_FIELDS = [
   ['minFlow', 'Min flow', 'g/s', 0.1],
   ['maxFlow', 'Max flow', 'g/s', 0.1],
   ['maxTotalDuration', 'Max shot time', 's', 1],
+  ['maxPhaseDuration', 'Max time for one phase', 's', 1],
   ['maxYield', 'Max yield', 'g', 1],
   ['maxTemperatureStep', 'Max temperature change per shot', '°C', 0.5],
   ['maxPressureStep', 'Max pressure change per shot', 'bar', 0.5],
