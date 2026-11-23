@@ -123,7 +123,7 @@ inline float yieldOf(const ProfileSpec &profile) {
     return y;
 }
 
-constexpr float EPS = 0.001f;
+constexpr float kTolerance = 0.001f;
 
 } // namespace detail
 
@@ -131,7 +131,7 @@ constexpr float EPS = 0.001f;
 // `previous` is the currently stored version of the same profile, if any.
 inline std::vector<std::string> validate(const ProfileSpec &profile, const SafetyLimits &limitsIn,
                                          const ProfileSpec *previous = nullptr) {
-    using detail::EPS;
+    using detail::kTolerance;
     using detail::fmt;
     SafetyLimits L = limitsIn;
     L.clampToHard();
@@ -145,7 +145,7 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
         errors.push_back("Profile has no phases.");
     if ((int)profile.phases.size() > L.maxPhases)
         errors.push_back("Too many phases: " + std::to_string(profile.phases.size()) + " (max " + std::to_string(L.maxPhases) + ").");
-    if (profile.temperature < L.minTemperature - EPS || profile.temperature > L.maxTemperature + EPS)
+    if (profile.temperature < L.minTemperature - kTolerance || profile.temperature > L.maxTemperature + kTolerance)
         errors.push_back("Temperature " + fmt(profile.temperature) + " °C is outside " + fmt(L.minTemperature) + "–" +
                          fmt(L.maxTemperature) + " °C.");
 
@@ -156,11 +156,11 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
         const std::string label = detail::phaseLabel(i, ph);
         const float pressureCap = ph.preinfusion ? L.maxPreinfusionPressure : L.maxPressure;
 
-        if (ph.duration <= 0 || ph.duration > L.maxPhaseDuration + EPS)
+        if (ph.duration <= 0 || ph.duration > L.maxPhaseDuration + kTolerance)
             errors.push_back(label + ": duration " + fmt(ph.duration) + " s must be above 0 and at most " + fmt(L.maxPhaseDuration) + " s.");
         total += std::max(0.0f, ph.duration);
 
-        if (ph.temperature != 0 && (ph.temperature < L.minTemperature - EPS || ph.temperature > L.maxTemperature + EPS))
+        if (ph.temperature != 0 && (ph.temperature < L.minTemperature - kTolerance || ph.temperature > L.maxTemperature + kTolerance))
             errors.push_back(label + ": temperature " + fmt(ph.temperature) + " °C is outside " + fmt(L.minTemperature) + "–" +
                              fmt(L.maxTemperature) + " °C.");
 
@@ -171,19 +171,19 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
             if (ph.pressure == -1) {
                 if (i == 0)
                     errors.push_back(label + ": the first phase can't hold a measured pressure; set a value.");
-            } else if (ph.pressure <= 0 || ph.pressure > pressureCap + EPS) {
+            } else if (ph.pressure <= 0 || ph.pressure > pressureCap + kTolerance) {
                 errors.push_back(label + ": pressure " + fmt(ph.pressure) + " bar must be above 0 and at most " + fmt(pressureCap) + " bar.");
             }
-            if (ph.flow != 0 && ph.flow != -1 && (ph.flow < 0 || ph.flow > L.maxFlow + EPS))
+            if (ph.flow != 0 && ph.flow != -1 && (ph.flow < 0 || ph.flow > L.maxFlow + kTolerance))
                 errors.push_back(label + ": flow limit " + fmt(ph.flow) + " g/s is above " + fmt(L.maxFlow) + " g/s.");
         } else {
             if (ph.flow == -1) {
                 if (i == 0)
                     errors.push_back(label + ": the first phase can't hold a measured flow; set a value.");
-            } else if (ph.flow < L.minFlow - EPS || ph.flow > L.maxFlow + EPS) {
+            } else if (ph.flow < L.minFlow - kTolerance || ph.flow > L.maxFlow + kTolerance) {
                 errors.push_back(label + ": flow " + fmt(ph.flow) + " g/s is outside " + fmt(L.minFlow) + "–" + fmt(L.maxFlow) + " g/s.");
             }
-            if (ph.pressure <= 0 || ph.pressure > pressureCap + EPS)
+            if (ph.pressure <= 0 || ph.pressure > pressureCap + kTolerance)
                 errors.push_back(label + ": flow-controlled phases need a pressure limit above 0 and at most " + fmt(pressureCap) +
                                  " bar (0 would mean no limit).");
         }
@@ -191,14 +191,14 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
         for (const auto &t : ph.targets) {
             if (t.kind == TargetKind::Volumetric) {
                 hasYieldStop = true;
-                if (t.value <= 0 || t.value > L.maxYield + EPS)
+                if (t.value <= 0 || t.value > L.maxYield + kTolerance)
                     errors.push_back(label + ": yield target " + fmt(t.value) + " g must be above 0 and at most " + fmt(L.maxYield) + " g.");
-            } else if (t.kind == TargetKind::Pressure && t.value > L.maxPressure + EPS) {
+            } else if (t.kind == TargetKind::Pressure && t.value > L.maxPressure + kTolerance) {
                 errors.push_back(label + ": pressure stop condition " + fmt(t.value) + " bar is above " + fmt(L.maxPressure) + " bar.");
             }
         }
     }
-    if (total > L.maxTotalDuration + EPS)
+    if (total > L.maxTotalDuration + kTolerance)
         errors.push_back("Total of phase times is " + fmt(total) + " s; the limit is " + fmt(L.maxTotalDuration) + " s.");
     if (!profile.phases.empty() && !hasYieldStop)
         errors.push_back("Profile needs a yield (weight) target so the shot stops on the scale.");
@@ -211,9 +211,9 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
         }
         bool changedTemp = false, changedPressure = false, changedFlow = false, changedDuration = false, changedYield = false;
         float dt = std::fabs(profile.temperature - previous->temperature);
-        if (dt > EPS)
+        if (dt > kTolerance)
             changedTemp = true;
-        if (dt > L.maxTemperatureStep + EPS)
+        if (dt > L.maxTemperatureStep + kTolerance)
             errors.push_back("Temperature changes by " + fmt(dt) + " °C; at most " + fmt(L.maxTemperatureStep) + " °C per shot.");
         for (size_t i = 0; i < profile.phases.size(); i++) {
             const auto &a = previous->phases[i];
@@ -224,32 +224,32 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
                 continue;
             }
             float pdt = std::fabs(detail::effectiveTemp(profile, b) - detail::effectiveTemp(*previous, a));
-            if (pdt > EPS)
+            if (pdt > kTolerance)
                 changedTemp = true;
-            if (pdt > L.maxTemperatureStep + EPS)
+            if (pdt > L.maxTemperatureStep + kTolerance)
                 errors.push_back(label + ": temperature changes by " + fmt(pdt) + " °C; at most " + fmt(L.maxTemperatureStep) + " °C per shot.");
             if (!b.simplePump) {
                 float dp = std::fabs(b.pressure - a.pressure);
-                if (dp > EPS)
+                if (dp > kTolerance)
                     changedPressure = true;
-                if (dp > L.maxPressureStep + EPS)
+                if (dp > L.maxPressureStep + kTolerance)
                     errors.push_back(label + ": pressure changes by " + fmt(dp) + " bar; at most " + fmt(L.maxPressureStep) + " bar per shot.");
                 float df = std::fabs(b.flow - a.flow);
-                if (df > EPS)
+                if (df > kTolerance)
                     changedFlow = true;
-                if (df > L.maxFlowStep + EPS)
+                if (df > L.maxFlowStep + kTolerance)
                     errors.push_back(label + ": flow changes by " + fmt(df) + " g/s; at most " + fmt(L.maxFlowStep) + " g/s per shot.");
             }
             float dd = std::fabs(b.duration - a.duration);
-            if (dd > EPS)
+            if (dd > kTolerance)
                 changedDuration = true;
-            if (dd > L.maxDurationStep + EPS)
+            if (dd > L.maxDurationStep + kTolerance)
                 errors.push_back(label + ": time changes by " + fmt(dd) + " s; at most " + fmt(L.maxDurationStep) + " s per shot.");
         }
         float dy = std::fabs(detail::yieldOf(profile) - detail::yieldOf(*previous));
-        if (dy > EPS)
+        if (dy > kTolerance)
             changedYield = true;
-        if (dy > L.maxYieldStep + EPS)
+        if (dy > L.maxYieldStep + kTolerance)
             errors.push_back("Yield changes by " + fmt(dy) + " g; at most " + fmt(L.maxYieldStep) + " g per shot.");
         int changed = changedTemp + changedPressure + changedFlow + changedDuration + changedYield;
         if (changed > L.maxChangedVariables)
