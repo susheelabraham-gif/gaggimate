@@ -1,0 +1,25 @@
+name: Decode crash backtrace
+on:
+  push:
+    branches: [crashdecode]
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pip install platformio
+      - run: scripts/build_webui.sh
+      - run: python3 scripts/embed_dialin_app.py && pio run -e display
+      - name: Decode
+        run: |
+          A2L=$(find ~/.platformio/packages -name 'xtensa-esp32s3-elf-addr2line' | head -1)
+          sha256sum .pio/build/display/firmware.elf
+          $A2L -pfiaC -e .pio/build/display/firmware.elf $(cat crash-addresses.txt)
