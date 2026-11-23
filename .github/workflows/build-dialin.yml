@@ -1,0 +1,39 @@
+# Builds the Dial-in edition of the display firmware and the SD-card app files.
+# Unlike build.yml it needs no update-server secrets, so it runs in a personal fork.
+on:
+  push:
+    branches: [dialin]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build web UI
+        run: scripts/build_webui.sh
+      - name: Test safety validator
+        run: pio test -e native -f test_dialin_safety
+      - name: Build display firmware
+        run: |
+          pio run -e display
+          mkdir -p out
+          cp .pio/build/display/firmware.bin out/display-firmware.bin
+          cp .pio/build/display/partitions.bin out/display-partitions.bin
+          cp .pio/build/display/bootloader.bin out/display-bootloader.bin
+      - name: Package SD-card app
+        run: cd dialin-app && zip -r ../out/dialin-sdcard.zip dialin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gaggimate-dialin-firmware
+          path: out/*

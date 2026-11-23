@@ -19,6 +19,7 @@
 #include <display/plugins/BoilerFillPlugin.h>
 #include <display/plugins/LedControlPlugin.h>
 #include <display/plugins/ShotHistoryPlugin.h>
+#include <display/plugins/DialInPlugin.h>
 #include <display/plugins/SmartGrindPlugin.h>
 #include <display/plugins/WebUIPlugin.h>
 #ifndef GAGGIMATE_SIM // network/BLE plugins are device-only
@@ -94,6 +95,7 @@ void Controller::setup() {
         pluginManager->registerPlugin(new MQTTPlugin());
     }
 #endif
+    pluginManager->registerPlugin(&DialIn); // before WebUIPlugin: it attaches routes there
     pluginManager->registerPlugin(new WebUIPlugin());
 #ifndef GAGGIMATE_SIM // WiFi watchdogs and BLE scales are device-only
     pluginManager->registerPlugin(new NetworkWatchdogPlugin());
