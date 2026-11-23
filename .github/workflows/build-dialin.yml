@@ -6,6 +6,9 @@ on:
     branches: [dialin]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,3 +44,11 @@ jobs:
         with:
           name: gaggimate-dialin-firmware
           path: out/*
+      - name: Publish as a release (easy download page)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="dialin-build-${{ github.run_number }}"
+          gh release create "$tag" out/* --target "${{ github.sha }}" --prerelease \
+            --title "Dial-in build ${{ github.run_number }}" \
+            --notes "Flash boot_app0.bin at 0xe000 and display-firmware.bin at 0x10000. Copy the dialin folder from dialin-sdcard.zip to the SD card. See dialin-app/README.md."
