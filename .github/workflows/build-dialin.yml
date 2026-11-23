@@ -1,4 +1,5 @@
 # Builds the Dial-in edition of the display firmware and the SD-card app files.
+name: Build Dial-in firmware
 # Unlike build.yml it needs no update-server secrets, so it runs in a personal fork.
 on:
   push:
