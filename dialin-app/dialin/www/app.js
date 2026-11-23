@@ -1,5 +1,7 @@
 import { GaggiMate } from './lib/gm.js';
 import { shotChart } from './lib/chart.js';
+import { aiSettings, DEFAULT_MODEL } from './lib/ai.js';
+import { initBeans } from './beans.js';
 
 const gm = new GaggiMate();
 const $ = sel => document.querySelector(sel);
@@ -7,6 +9,11 @@ const esc = s =>
   String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 let pluginInfo = null;
+let appSettings = {
+  dose: 18,
+  grinder: { brand: 'DF64', model: 'DF64 Gen 2', step: 0.5, baseline: null, finerIsLower: true },
+};
+const GRINDER_PRESETS = { 'DF64 Gen 2': 0.5 };
 let currentTab = 'shot';
 
 // ---------------------------------------------------------------- tabs
@@ -19,6 +26,7 @@ function showTab(name) {
   for (const btn of document.querySelectorAll('[data-tab]')) btn.setAttribute('aria-selected', btn.dataset.tab === name);
   for (const sec of document.querySelectorAll('.tab')) sec.hidden = sec.id !== `tab-${name}`;
   if (name === 'profiles') renderProfiles();
+  if (name === 'beans') beans.render();
   if (name === 'settings') renderSettings();
   history.replaceState(null, '', `#${name}`);
 }
@@ -39,7 +47,9 @@ gm.addEventListener('connection', e => {
   el.className = `conn ${e.detail ? 'on' : 'off'}`;
   if (e.detail) {
     loadLastShot();
+    loadAppSettings();
     if (currentTab === 'profiles') renderProfiles();
+    if (currentTab === 'beans') beans.refreshList();
   }
 });
 
@@ -186,6 +196,7 @@ async function renderSettings() {
     $('#limits').innerHTML = `<p class="error">${esc(err.message)}</p>`;
     return;
   }
+  renderAppSettings();
   const { limits, hardLimits } = pluginInfo;
   $('#limits').innerHTML =
     LIMIT_FIELDS.map(([key, label, unit, step]) => {
@@ -208,6 +219,75 @@ async function renderSettings() {
   $('#storage').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
 }
 
+async function loadAppSettings() {
+  try {
+    const saved = await gm.getRecord('settings', 'app');
+    if (saved) appSettings = { ...appSettings, ...saved, grinder: { ...appSettings.grinder, ...(saved.grinder || {}) } };
+  } catch {
+    /* defaults */
+  }
+  try {
+    pluginInfo = pluginInfo || (await gm.pluginStatus());
+  } catch {
+    /* limits default inside the logic */
+  }
+  if (currentTab === 'settings') renderAppSettings();
+}
+
+function renderAppSettings() {
+  const g = appSettings.grinder;
+  $('#appsettings').innerHTML = `
+    <label><span>Grinder</span><span class="input"><input name="model" value="${esc(g.model)}" style="width:150px;text-align:left"/></span>
+      <span class="muted small">Change this if you get a new grinder. A new grinder starts a fresh grind history.</span></label>
+    <label><span>Smallest step you use</span><span class="input"><input name="step" type="number" step="0.05" value="${g.step}" inputmode="decimal"/><span class="unit"></span></span>
+      <span class="muted small">DF64 Gen 2: 0.5. Other grinders start at 0.25.</span></label>
+    <label><span>Your usual espresso grind (medium roast)</span><span class="input"><input name="baseline" type="number" step="0.25" value="${g.baseline ?? ''}" inputmode="decimal"/><span class="unit"></span></span>
+      <span class="muted small">Used to suggest a starting grind for new coffees.</span></label>
+    <label class="check"><input type="checkbox" name="finerIsLower" ${g.finerIsLower ? 'checked' : ''}/> <span>Lower numbers are finer</span></label>
+    <label><span>Usual dose</span><span class="input"><input name="dose" type="number" step="0.5" value="${appSettings.dose}" inputmode="decimal"/><span class="unit">g</span></span></label>
+    <button type="submit" class="primary">Save</button>`;
+  $('#aisettings').innerHTML = `
+    <label><span>Anthropic API key</span><span class="input"><input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(aiSettings.apiKey || '')}" style="width:170px;text-align:left"/></span></label>
+    <label><span>Model</span><span class="input"><input name="model" value="${esc(aiSettings.model)}" style="width:170px;text-align:left"/></span>
+      <span class="muted small">Default ${DEFAULT_MODEL}.</span></label>
+    <button type="submit" class="primary">Save</button>`;
+}
+
+$('#appsettings').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target).entries());
+  const model = f.model.trim() || 'Grinder';
+  const changedGrinder = model !== appSettings.grinder.model;
+  appSettings = {
+    ...appSettings,
+    dose: Number(f.dose) || 18,
+    grinder: {
+      ...appSettings.grinder,
+      model,
+      step: Number(f.step) || GRINDER_PRESETS[model] || 0.25,
+      baseline: f.baseline === '' ? null : Number(f.baseline),
+      finerIsLower: !!f.finerIsLower,
+      since: changedGrinder ? new Date().toISOString().slice(0, 10) : appSettings.grinder.since,
+    },
+  };
+  if (changedGrinder && !f.step) appSettings.grinder.step = GRINDER_PRESETS[model] || 0.25;
+  try {
+    await gm.putRecord('settings', 'app', appSettings);
+    toast('Saved.', 'ok');
+    renderAppSettings();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+$('#aisettings').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target).entries());
+  aiSettings.apiKey = f.apiKey.trim();
+  aiSettings.model = f.model.trim();
+  toast('Saved in this browser.', 'ok');
+});
+
 $('#limits').addEventListener('submit', async e => {
   e.preventDefault();
   const data = Object.fromEntries(
@@ -224,5 +304,11 @@ $('#limits').addEventListener('submit', async e => {
 });
 
 // ---------------------------------------------------------------- start
+const beans = initBeans({
+  gm,
+  root: $('#tab-beans'),
+  toast,
+  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits }),
+});
 gm.connect();
 showTab((location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot');

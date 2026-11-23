@@ -25,6 +25,8 @@ struct HardLimits {
     static constexpr float maxPhaseDuration = 60.0f;       // s
     static constexpr float maxTotalDuration = 60.0f;       // s
     static constexpr float maxYield = 60.0f;               // g
+    static constexpr float maxSalamiCupWater = 30.0f;      // ml pumped per salami cup
+    static constexpr float maxSalamiWater = 100.0f;        // ml pumped for a whole salami shot
     static constexpr int maxPhases = 8;
 };
 
@@ -91,6 +93,9 @@ struct PhaseSpec {
 struct ProfileSpec {
     std::string type; // "standard" | "pro"
     bool utility = false;
+    // Salami diagnostic: split into cups that each end on water pumped, so it has
+    // no yield (scale) stop. Every cup phase must then carry a pumped-water target.
+    bool salami = false;
     float temperature = 0;
     std::vector<PhaseSpec> phases;
 };
@@ -200,11 +205,34 @@ inline std::vector<std::string> validate(const ProfileSpec &profile, const Safet
     }
     if (total > L.maxTotalDuration + kTolerance)
         errors.push_back("Total of phase times is " + fmt(total) + " s; the limit is " + fmt(L.maxTotalDuration) + " s.");
-    if (!profile.phases.empty() && !hasYieldStop)
+    if (profile.salami) {
+        float totalWater = 0;
+        int cups = 0;
+        for (size_t i = 0; i < profile.phases.size(); i++) {
+            const auto &ph = profile.phases[i];
+            if (ph.preinfusion)
+                continue;
+            cups++;
+            float water = 0;
+            for (const auto &t : ph.targets)
+                if (t.kind == TargetKind::Pumped)
+                    water = std::max(water, t.value);
+            if (water <= 0 || water > HardLimits::maxSalamiCupWater + kTolerance)
+                errors.push_back(detail::phaseLabel(i, ph) + ": each salami cup must end after 0–" +
+                                 fmt(HardLimits::maxSalamiCupWater) + " ml of water pumped.");
+            totalWater += water;
+        }
+        if (cups < 2)
+            errors.push_back("A salami shot needs at least 2 cups.");
+        if (totalWater > HardLimits::maxSalamiWater + kTolerance)
+            errors.push_back("Salami shot pumps " + fmt(totalWater) + " ml in total; the limit is " +
+                             fmt(HardLimits::maxSalamiWater) + " ml.");
+    } else if (!profile.phases.empty() && !hasYieldStop) {
         errors.push_back("Profile needs a yield (weight) target so the shot stops on the scale.");
+    }
 
     // Change-per-shot limits against the stored version.
-    if (previous && errors.empty()) {
+    if (previous && errors.empty() && !profile.salami) {
         if (previous->phases.size() != profile.phases.size()) {
             errors.push_back("Phase count changed; save this as a new profile instead of editing the existing one.");
             return errors;

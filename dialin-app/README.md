@@ -1,18 +1,38 @@
-# GaggiMate Dial-in (phase 1)
+# GaggiMate Dial-in
 
 Adds the Dial-in assistant to GaggiMate v1.9.0. It runs entirely on the machine:
 the display firmware serves the app from the SD card, stores its data there and
 checks every profile the assistant saves against hard safety limits. It never
 starts a shot.
 
-## What is in this version
+## What is in this version (0.2.0)
 
 - **Dial-in** item in GaggiMate's menu, opening `http://gaggimate.local/dialin/`.
+- **Coffees**: add a coffee from a photo of the bag and/or its name. Claude
+  looks it up (roaster page first, then reviews and forums) and fills in origin,
+  process, roast level, tasting notes and any recipe; you check and correct it.
+  Adding a coffee you've had before records a **new bag** instead.
+- **Salami diagnostic** for a new coffee: one shot split into 3–5 cups, planned
+  from the roast level and any recipe found. Each cup is a phase named "Cup N"
+  that ends on water pumped; the machine's screen shows the cup to use and the
+  phone beeps. Afterwards you weigh each cup (one tap reads the Bookoo) and tap
+  what you taste. The app turns that into a starting recipe (yield, ratio,
+  temperature, pre-infusion, grind hint) and saves it as the active profile.
 - **Last shot**: time, yield, ratio, peak pressure, a pressure / flow / weight
-  chart, and the shot's tasting notes. Refreshes when a new shot is saved.
+  chart, and the shot's tasting notes.
 - **Profiles**: every brew profile on the machine, checked against the limits.
-- **Settings**: safety limits (tighten only; the machine caps them at 10 bar,
-  96 °C, 4 g/s, 60 s, 60 g), SD card space, plugin version.
+- **Settings**: grinder (model, smallest step, usual grind), usual dose, your
+  Anthropic API key (kept in the browser only), safety limits, SD card space.
+
+The machine checks every profile the app saves: at most 10 bar, 96 °C, 4 g/s,
+60 s, 60 g, one change per shot. Salami profiles may stop on water pumped
+instead of weight, at most 30 ml per cup and 100 ml per shot.
+
+### AI look-ups
+
+You need an Anthropic API key with web search enabled for its organization in
+the Claude Console. The browser calls the API directly, so the key is visible
+to anyone using that browser; use a key with a spending limit.
 
 ## Install
 
@@ -66,5 +86,7 @@ To update the app later, replace `/dialin/www/` on the card; no flashing needed.
   `test/test_dialin_safety` (`pio test -e native -f test_dialin_safety`).
 - `web/src/components/Navigation.jsx`: the Dial-in menu item.
 - `dialin-app/dialin/www/`: the app (plain HTML/JS, no build step).
+  `lib/dialin.js` holds the salami planning and recipe logic, `lib/ai.js` the
+  look-ups; tests in `dialin-app/test` (`cd dialin-app && npm test`).
 
 Licensed like GaggiMate: CC BY-NC-SA 4.0.

@@ -15,12 +15,15 @@
     </header>
 
     <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="beans">Coffees</button>
       <button role="tab" data-tab="shot" aria-selected="true">Last shot</button>
       <button role="tab" data-tab="profiles">Profiles</button>
       <button role="tab" data-tab="settings">Settings</button>
     </nav>
 
     <main>
+      <section id="tab-beans" class="tab" hidden></section>
+
       <section id="tab-shot" class="tab">
         <div id="machine" class="card machine"></div>
         <div id="shot" class="card"><p class="muted">Loading the last shot…</p></div>
@@ -39,6 +42,15 @@
           <h2>Safety limits</h2>
           <p class="muted">Every profile the assistant saves must stay inside these. You can tighten them; the machine never allows more than its hard limits.</p>
           <form id="limits" class="limits"></form>
+        </div>
+        <div class="card">
+          <h2>Grinder and dose</h2>
+          <form id="appsettings" class="limits"></form>
+        </div>
+        <div class="card">
+          <h2>AI look-ups</h2>
+          <p class="muted">Coffees are looked up with Claude using your own Anthropic API key. The key stays in this browser only; it is not saved on the machine. Web search must be enabled for your key's organization in the Claude Console.</p>
+          <form id="aisettings" class="limits"></form>
         </div>
         <div class="card">
           <h2>Storage and version</h2>

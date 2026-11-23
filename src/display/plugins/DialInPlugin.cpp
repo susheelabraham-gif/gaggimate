@@ -396,7 +396,9 @@ void DialInPlugin::handleProfileCheck(AsyncWebServerRequest *request, const std:
     dialin::ProfileSpec prevSpec;
     if (hasPrevious)
         prevSpec = toSpec(previous);
-    auto errors = dialin::validate(toSpec(profile), limits, hasPrevious ? &prevSpec : nullptr);
+    dialin::ProfileSpec spec = toSpec(profile);
+    spec.salami = in["salami"] | false;
+    auto errors = dialin::validate(spec, limits, hasPrevious ? &prevSpec : nullptr);
 
     JsonDocument out;
     out["ok"] = errors.empty();

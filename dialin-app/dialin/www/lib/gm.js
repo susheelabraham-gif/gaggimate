@@ -128,10 +128,35 @@ export class GaggiMate extends EventTarget {
   setLimits(limits) {
     return this.api('POST', '/limits', limits);
   }
-  checkProfile(profile) {
-    return this.api('POST', '/profile/check', { profile });
+  checkProfile(profile, { salami = false } = {}) {
+    return this.api('POST', '/profile/check', { profile, salami });
   }
-  saveProfile(profile, select = false) {
-    return this.api('POST', '/profile/save', { profile, select });
+  saveProfile(profile, select = false, { salami = false } = {}) {
+    return this.api('POST', '/profile/save', { profile, select, salami });
+  }
+
+  // ---- records on the SD card (/dialin/data/<collection>/<id>.json)
+  async listRecords(collection) {
+    const res = await this.api('GET', `/data/${collection}`);
+    return res.ids || [];
+  }
+  async getRecord(collection, id) {
+    const res = await fetch(`/api/dialin/data/${collection}/${id}`, { cache: 'no-store' });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Could not read ${collection}/${id} (${res.status})`);
+    return res.json();
+  }
+  async getAll(collection) {
+    const ids = await this.listRecords(collection);
+    const records = await Promise.all(ids.map(id => this.getRecord(collection, id).catch(() => null)));
+    return records.filter(Boolean);
+  }
+  async putRecord(collection, id, record) {
+    const res = await this.api('POST', `/data/${collection}/${id}`, record);
+    if (!res.ok) throw new Error((res.errors || ['Could not save'])[0]);
+    return record;
+  }
+  deleteRecord(collection, id) {
+    return this.api('DELETE', `/data/${collection}/${id}`);
   }
 }

@@ -139,6 +139,46 @@ void test_structure_change_needs_new_profile() {
     TEST_ASSERT_TRUE(hasErrorContaining(validate(next, SafetyLimits{}, &prev), "new profile"));
 }
 
+static ProfileSpec salamiProfile(int cups, float waterPerCup) {
+    ProfileSpec s;
+    s.type = "pro";
+    s.salami = true;
+    s.temperature = 93;
+    s.phases.push_back(pressurePhase(3, 6, true));
+    for (int i = 0; i < cups; i++) {
+        PhaseSpec cup = pressurePhase(9, 12);
+        cup.name = "Cup " + std::to_string(i + 1);
+        cup.targets.push_back({TargetKind::Pumped, waterPerCup});
+        s.phases.push_back(cup);
+    }
+    return s;
+}
+
+void test_salami_without_yield_stop_allowed() {
+    TEST_ASSERT_EQUAL(0, validate(salamiProfile(4, 15), SafetyLimits{}).size());
+}
+
+void test_salami_cups_need_water_stop_and_limits() {
+    auto p = salamiProfile(4, 15);
+    p.phases[2].targets.clear();
+    TEST_ASSERT_TRUE(hasErrorContaining(validate(p, SafetyLimits{}), "must end after"));
+    TEST_ASSERT_FALSE(validate(salamiProfile(4, 35), SafetyLimits{}).empty()); // cup too big
+    TEST_ASSERT_TRUE(hasErrorContaining(validate(salamiProfile(1, 15), SafetyLimits{}), "at least 2 cups"));
+    auto hot = salamiProfile(4, 15);
+    hot.phases[1].pressure = 11; // pressure limits still apply
+    TEST_ASSERT_FALSE(validate(hot, SafetyLimits{}).empty());
+    auto longShot = salamiProfile(5, 15);
+    for (auto &ph : longShot.phases)
+        ph.duration = 15; // 75 s total
+    TEST_ASSERT_TRUE(hasErrorContaining(validate(longShot, SafetyLimits{}), "Total of phase times"));
+}
+
+void test_normal_profile_still_needs_yield_stop() {
+    auto p = salamiProfile(4, 15);
+    p.salami = false;
+    TEST_ASSERT_TRUE(hasErrorContaining(validate(p, SafetyLimits{}), "yield"));
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_good_profile_passes);
@@ -153,5 +193,8 @@ int main() {
     RUN_TEST(test_one_change_per_shot);
     RUN_TEST(test_step_sizes);
     RUN_TEST(test_structure_change_needs_new_profile);
+    RUN_TEST(test_salami_without_yield_stop_allowed);
+    RUN_TEST(test_salami_cups_need_water_stop_and_limits);
+    RUN_TEST(test_normal_profile_still_needs_yield_stop);
     return UNITY_END();
 }

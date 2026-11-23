@@ -24,6 +24,8 @@ jobs:
         run: scripts/build_webui.sh
       - name: Test safety validator
         run: pio test -e native -f test_dialin_safety
+      - name: Test app logic
+        run: cd dialin-app && npm test
       - name: Build display firmware
         run: |
           pio run -e display
