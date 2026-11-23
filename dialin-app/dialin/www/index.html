@@ -3,7 +3,24 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#3b2a20" />
+    <script>
+      // Follow GaggiMate's theme (Settings → Theme), stored by its web UI in this browser.
+      (function () {
+        function apply() {
+          var t = 'system';
+          try {
+            t = localStorage.getItem('gaggimate-daisyui-theme') || 'system';
+          } catch (e) {}
+          if (['light', 'dark', 'coffee', 'nord'].indexOf(t) < 0)
+            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', t);
+        }
+        apply();
+        addEventListener('storage', apply);
+        addEventListener('pageshow', apply);
+        matchMedia('(prefers-color-scheme: dark)').addEventListener('change', apply);
+      })();
+    </script>
     <title>Dial-in · GaggiMate</title>
     <link rel="stylesheet" href="app.css" />
   </head>
