@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.2.2"
+#define DIALIN_PLUGIN_VERSION "0.2.3"
 
 class DialInPlugin : public Plugin {
   public:

@@ -206,7 +206,7 @@ async function renderSettings() {
           ? ''
           : `<span class="muted small">${key.startsWith('min') ? 'Machine allows no lower than' : 'Machine allows no higher than'} ${hard} ${unit}</span>`;
       return `<label><span>${label}</span>
-        <span class="input"><input type="number" name="${key}" step="${step}" value="${limits[key]}" inputmode="decimal"/><span class="unit">${unit}</span></span>${hint}</label>`;
+        <span class="input"><input type="number" name="${key}" step="any" value="${limits[key]}" inputmode="decimal"/><span class="unit">${unit}</span></span>${hint}</label>`;
     }).join('') + '<button type="submit" class="primary">Save limits</button>';
 
   const gb = b => (b / 1024 ** 3).toFixed(1);

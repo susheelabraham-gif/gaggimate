@@ -179,6 +179,18 @@ void test_normal_profile_still_needs_yield_stop() {
     TEST_ASSERT_TRUE(hasErrorContaining(validate(p, SafetyLimits{}), "yield"));
 }
 
+void test_yield_ceiling_is_100g() {
+    SafetyLimits user;
+    user.maxYield = 66;
+    auto p = goodProfile();
+    p.phases[1].targets[0].value = 66;
+    TEST_ASSERT_EQUAL(0, validate(p, user).size());
+    TEST_ASSERT_FALSE(validate(p, SafetyLimits{}).empty()); // default stays 60 g
+    user.maxYield = 150;
+    p.phases[1].targets[0].value = 120;
+    TEST_ASSERT_FALSE(validate(p, user).empty()); // capped at 100 g
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_good_profile_passes);
@@ -196,5 +208,6 @@ int main() {
     RUN_TEST(test_salami_without_yield_stop_allowed);
     RUN_TEST(test_salami_cups_need_water_stop_and_limits);
     RUN_TEST(test_normal_profile_still_needs_yield_stop);
+    RUN_TEST(test_yield_ceiling_is_100g);
     return UNITY_END();
 }
