@@ -32,12 +32,15 @@ jobs:
         run: cd dialin-app && npm test
       - name: Tag the GaggiMate base version
         # Forks don't copy tags. GaggiMate's update checker parses the version
-        # (git describe) at start-up and crashes on a bare commit hash, so give
-        # the v1.10.0 base commit its tag: the build becomes v1.10.0-N-g<sha>.
+        # (git describe) at start-up and crashes on a bare commit hash, so it
+        # needs a version tag. Tag this build itself v1.10.0 (local only, never
+        # pushed): a "v1.10.0-N-g<sha>" version ranks below v1.10.0, so the
+        # built-in updater would keep offering a display update that replaces
+        # Dial-in. Newer official releases (v1.10.1+) are still offered.
         # Drop this workflow's own release tags so git describe can't pick them.
         run: |
           git tag -l 'dialin-build-*' | xargs -r git tag -d
-          git tag -f v1.10.0 34bf9fc
+          git tag -f v1.10.0 HEAD
           git describe --tags --dirty --exclude nightly --exclude db
       - run: mkdir -p out
       - name: Build display firmware
