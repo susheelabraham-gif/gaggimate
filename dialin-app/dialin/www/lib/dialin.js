@@ -65,7 +65,11 @@ export function planSalami(bean, dose) {
     cupYield = (dose * maxRatio) / cups;
   }
   cupYield = Math.min(cupYield, MAX_CUP_WATER);
-  const cupCap = Math.floor(Math.min((MAX_SHOT_S - PREINFUSION_S) / cups, Math.max(6, (2 * cupYield) / d.flow)));
+  // Cups run at a controlled flow so each lasts about 10 s or more: slow enough to swap
+  // cups by hand. The flow is set so the whole shot fits the time limit.
+  const usable = MAX_SHOT_S - PREINFUSION_S - 4;
+  const cupFlow = round(clamp((cupYield * cups) / usable, 1.0, 2.0), 0.1);
+  const cupCap = Math.floor(Math.min((MAX_SHOT_S - PREINFUSION_S) / cups, (1.5 * cupYield) / cupFlow));
   const temperature = clamp(bean?.recipe?.tempC ?? d.temp, 85, 96);
   const list = [];
   for (let i = 1; i <= cups; i++) {
@@ -77,7 +81,7 @@ export function planSalami(bean, dose) {
       timeCap: cupCap,
     });
   }
-  return { dose, temperature, cups: list, expectedBestRatio: round(best, 0.05), expectedFlow: d.flow };
+  return { dose, temperature, cups: list, cupFlow, expectedBestRatio: round(best, 0.05), expectedFlow: d.flow };
 }
 
 export function salamiProfile(bean, plan) {
@@ -85,7 +89,7 @@ export function salamiProfile(bean, plan) {
   return {
     label: `Salami · ${name}`.slice(0, 40),
     type: 'pro',
-    description: `Salami diagnostic, ${plan.cups.length} cups, ${plan.dose} g dose`,
+    description: `Salami diagnostic, ${plan.cups.length} cups at ${plan.cupFlow ?? ''} g/s, ${plan.dose} g dose`,
     temperature: plan.temperature,
     phases: [
       {
@@ -101,7 +105,10 @@ export function salamiProfile(bean, plan) {
         phase: 'brew',
         valve: 1,
         duration: c.timeCap,
-        pump: { target: 'pressure', pressure: BREW_BAR, flow: 0 },
+        // Flow-controlled with a 9 bar ceiling (the machine requires a pressure cap).
+        pump: plan.cupFlow
+          ? { target: 'flow', pressure: BREW_BAR, flow: plan.cupFlow }
+          : { target: 'pressure', pressure: BREW_BAR, flow: 0 },
         targets: [{ type: 'pumped', operator: 'gte', value: c.water }],
       })),
     ],
@@ -166,7 +173,7 @@ export function recommend({ bean, plan, cups, blendBest = null, shotSeconds = nu
   let grindAdvice = 'keep';
   if (shotSeconds && cumulative.at(-1)) {
     const flow = cumulative.at(-1) / shotSeconds;
-    const expected = plan.expectedFlow;
+    const expected = plan.cupFlow || plan.expectedFlow;
     if (flow > expected * 1.35) {
       grindAdvice = 'finer';
       reasons.push(`Coffee ran fast (${flow.toFixed(1)} g/s): grind a little finer.`);
@@ -218,4 +225,86 @@ export function slug(text) {
       .replace(/^-+|-+$/g, '')
       .slice(0, 40) || 'coffee'
   );
+}
+
+// ------------------------------------------------------------------ per-shot loop
+
+export const SHOT_WINDOW = { fast: 24, slow: 36 }; // total shot seconds, pre-infusion included
+
+// Grind on the dial as text, rounded to the grinder's step.
+export function fmtGrind(v, step = 0.25) {
+  return String(parseFloat(round(v, step).toFixed(2)));
+}
+
+// After a rated shot: what to change for the next one. Grind and temperature are never
+// changed together (one variable per shot).
+// shot: { seconds, yieldG, targetYield }  feedback: { taste: 'sour'|'balanced'|'bitter', rating }
+// dial: { grind, step, lastDir, goodStreak }  grinder: { step, finerIsLower }
+export function nextStep({ shot, feedback, dial, grinder, temperature, limits = {} }) {
+  const minStep = grinder?.step || 0.25;
+  const finer = grinder?.finerIsLower === false ? 1 : -1; // dial direction for "finer"
+  const reasons = [];
+  const t = shot.seconds;
+  const fast = t > 0 && t < SHOT_WINDOW.fast;
+  const slow = t > SHOT_WINDOW.slow;
+  const short = shot.targetYield && shot.yieldG && shot.yieldG < shot.targetYield * 0.85;
+  const timing = fast ? 'fast' : slow || short ? 'slow' : 'on time';
+  let grindDir = 0; // -1 = finer, +1 = coarser, in taste terms
+  let tempDelta = 0;
+  const taste = feedback.taste;
+
+  if (taste === 'sour' && timing === 'fast') {
+    grindDir = -1;
+    reasons.push(`Sour and fast (${t.toFixed(0)} s): grind finer.`);
+  } else if (taste === 'bitter' && timing === 'slow') {
+    grindDir = 1;
+    reasons.push(`Bitter and slow (${t.toFixed(0)} s): grind coarser.`);
+  } else if (taste === 'sour') {
+    tempDelta = 1;
+    reasons.push(`Sour but ${timing === 'slow' ? 'slow' : 'on time'}: keep the grind, temperature up 1 °C.`);
+  } else if (taste === 'bitter' && timing === 'fast') {
+    reasons.push('Bitter but fast: usually uneven extraction. Check distribution and tamp; grind unchanged.');
+  } else if (taste === 'bitter') {
+    tempDelta = -1;
+    reasons.push('Bitter but on time: keep the grind, temperature down 1 °C.');
+  } else if (timing === 'fast') {
+    grindDir = -1;
+    reasons.push(`Tastes fine but ran fast (${t.toFixed(0)} s): grind a touch finer for more body.`);
+  } else if (timing === 'slow') {
+    grindDir = 1;
+    reasons.push(`Tastes fine but ran slow (${t.toFixed(0)} s): grind a touch coarser.`);
+  } else {
+    reasons.push('Balanced and on time: no change.');
+  }
+
+  // Temperature within limits.
+  const minT = limits.minTemperature ?? 85;
+  const maxT = limits.maxTemperature ?? 96;
+  if (tempDelta && (temperature + tempDelta > maxT || temperature + tempDelta < minT)) {
+    reasons.push(`Temperature is already at the ${tempDelta > 0 ? 'upper' : 'lower'} limit, so the grind changes instead.`);
+    grindDir = tempDelta > 0 ? -1 : 1;
+    tempDelta = 0;
+  }
+
+  // Step size: start at two grinder steps, halve whenever the direction flips.
+  let step = dial?.step || 2 * minStep;
+  if (grindDir && dial?.lastDir && grindDir !== dial.lastDir) step = Math.max(minStep, step / 2);
+  step = Math.max(minStep, round(step, minStep));
+  const fromGrind = typeof dial?.grind === 'number' ? dial.grind : null;
+  const nextGrind = fromGrind != null ? round(fromGrind + (grindDir ? (grindDir === -1 ? finer : -finer) * step : 0), minStep) : null;
+
+  const good = taste === 'balanced' && (feedback.rating ?? 0) >= 4 && timing === 'on time';
+  const goodStreak = good ? (dial?.goodStreak || 0) + 1 : 0;
+  return {
+    timing,
+    grindDir,
+    grindStep: grindDir ? step : 0,
+    nextGrind,
+    tempDelta,
+    good,
+    goodStreak,
+    dialedIn: goodStreak >= 2,
+    reasons,
+    dial: { grind: nextGrind ?? fromGrind, step, lastDir: grindDir || dial?.lastDir || 0, goodStreak },
+  };
 }

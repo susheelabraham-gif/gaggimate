@@ -1,6 +1,7 @@
 #include "WarningManager.h"
 #include <display/core/Controller.h>
 #include <display/plugins/BLEScalePlugin.h>
+#include <display/plugins/DialInPlugin.h>
 
 namespace {
 struct WarningInfo {
@@ -12,6 +13,7 @@ const WarningInfo WARNING_INFO[WARNING_TYPE_COUNT] = {
     {"water", "Water tank low"},           {"flush", "Flush recommended"},
     {"switch", "Steam switch is on"},      {"scaleConnected", "Scale not connected"},
     {"scaleBattery", "Scale battery low"}, {"temperature", "Temperature not stable"},
+    {"dialinFeedback", "Rate your last shot in Dial-in"},
 };
 } // namespace
 
@@ -65,6 +67,7 @@ void WarningManager::evaluate() {
     active[WARNING_SCALE_CONNECTED] = !scaleConnected && settings.getSavedScale() != "";
     active[WARNING_SCALE_BATTERY] = scaleConnected && BLEScales.hasBatteryLevel() && BLEScales.getBatteryLevel() < 20;
     active[WARNING_TEMPERATURE] = !temperatureStable;
+    active[WARNING_DIALIN_FEEDBACK] = DialIn.isFeedbackPending();
 
     level[WARNING_WATER] = settings.getWarnWaterLevel();
     level[WARNING_FLUSH] = settings.getWarnFlush();
@@ -72,6 +75,8 @@ void WarningManager::evaluate() {
     level[WARNING_SCALE_CONNECTED] = settings.getWarnScaleConnected();
     level[WARNING_SCALE_BATTERY] = settings.getWarnScaleBattery();
     level[WARNING_TEMPERATURE] = settings.getWarnTemperature();
+    // Error level: pressing brew shows the confirm screen (Brew anyway / Cancel).
+    level[WARNING_DIALIN_FEEDBACK] = WARNING_LEVEL_ERROR;
 }
 
 bool WarningManager::isWarn(WarningType type) const { return active[type] && level[type] == WARNING_LEVEL_WARN; }

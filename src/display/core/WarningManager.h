@@ -12,6 +12,7 @@ enum WarningType {
     WARNING_SCALE_CONNECTED,
     WARNING_SCALE_BATTERY,
     WARNING_TEMPERATURE,
+    WARNING_DIALIN_FEEDBACK, // a Dial-in shot still needs tasting feedback
     WARNING_TYPE_COUNT
 };
 

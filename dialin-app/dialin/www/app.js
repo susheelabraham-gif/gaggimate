@@ -2,6 +2,7 @@ import { GaggiMate } from './lib/gm.js';
 import { shotChart } from './lib/chart.js';
 import { aiSettings, DEFAULT_MODEL } from './lib/ai.js';
 import { initBeans } from './beans.js';
+import { initFeedback } from './feedback.js';
 
 const gm = new GaggiMate();
 const $ = sel => document.querySelector(sel);
@@ -310,6 +311,16 @@ const beans = initBeans({
   root: $('#tab-beans'),
   toast,
   getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits }),
+});
+initFeedback({
+  gm,
+  toast,
+  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits }),
+  isBusy: () => beans.isBusy(),
+  onDone: () => {
+    if (currentTab === 'beans') beans.refreshList();
+    loadLastShot();
+  },
 });
 gm.connect();
 showTab((location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot');

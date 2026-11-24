@@ -83,6 +83,10 @@ export class GaggiMate extends EventTarget {
     return res.profile;
   }
 
+  async saveNotes(shotId, notes) {
+    return this.request('req:history:notes:save', { id: String(shotId), notes });
+  }
+
   async getNotes(shotId) {
     const res = await this.request('req:history:notes:get', { id: String(shotId) });
     return res.notes || null;
@@ -122,6 +126,12 @@ export class GaggiMate extends EventTarget {
     return { status: res.status, ...(data || {}) };
   }
 
+  getState() {
+    return this.api('GET', '/state');
+  }
+  clearFeedback(shotId) {
+    return this.api('POST', '/feedback', { shotId });
+  }
   pluginStatus() {
     return this.api('GET', '/status');
   }

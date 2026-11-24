@@ -5,7 +5,7 @@ the display firmware serves the app from the SD card, stores its data there and
 checks every profile the assistant saves against hard safety limits. It never
 starts a shot.
 
-## What is in this version (0.2.0)
+## What is in this version (0.3.0)
 
 - **Dial-in** item in GaggiMate's menu, opening `http://gaggimate.local/dialin/`.
 - **Coffees**: add a coffee from a photo of the bag and/or its name. Claude
@@ -18,6 +18,18 @@ starts a shot.
   phone beeps. Afterwards you weigh each cup (one tap reads the Bookoo) and tap
   what you taste. The app turns that into a starting recipe (yield, ratio,
   temperature, pre-infusion, grind hint) and saves it as the active profile.
+- **Rate every shot while dialing in**: when a shot is pulled with the profile
+  of a coffee that is being dialed in (or a salami), the machine flags it. The
+  app then opens a rating sheet (taste, 1–5, grind used, dose, notes) that only
+  closes by rating or skipping, and pressing brew on the machine first shows
+  "Rate your last shot in Dial-in" (Brew anyway / Cancel). The rating goes into
+  GaggiMate's own shot notes, and the app suggests the next grind or a 1 °C
+  temperature change, one at a time. The profile's name on the machine shows
+  the grind to use ("Red Brick · grind 14.5"). Two good shots in a row (balanced,
+  4–5, on time) switch the coffee to *Dialed in* and the prompts stop;
+  *Recalibrate* in Coffees turns them back on.
+- **Salami cups run at a controlled flow** (about 1–1.3 g/s, 10–13 s per cup) so
+  there is time to swap cups.
 - **Last shot**: time, yield, ratio, peak pressure, a pressure / flow / weight
   chart, and the shot's tasting notes.
 - **Profiles**: every brew profile on the machine, checked against the limits.

@@ -561,3 +561,66 @@ button.link {
 .check input {
   width: auto !important;
 }
+
+/* ---- per-shot feedback sheet */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow-y: auto;
+}
+.overlay[hidden] {
+  display: none;
+}
+body.locked {
+  overflow: hidden;
+}
+.sheet {
+  background: var(--card);
+  color: var(--ink);
+  width: 100%;
+  max-width: 560px;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  max-height: 100%;
+  overflow-y: auto;
+}
+@media (min-width: 600px) {
+  .overlay {
+    align-items: center;
+  }
+  .sheet {
+    border-radius: var(--radius-card);
+  }
+}
+.q {
+  margin: 14px 0 6px;
+  font-weight: 600;
+}
+.choice {
+  display: flex;
+  gap: 8px;
+}
+.big-chip {
+  flex: 1;
+  padding: 14px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.big-chip.on {
+  background: var(--brand);
+  color: var(--brand-ink);
+  border-color: var(--brand);
+}
+.dot.big {
+  width: 44px;
+  height: 44px;
+  font-size: 16px;
+}
+.next {
+  font-size: 18px;
+}

@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.2.6"
+#define DIALIN_PLUGIN_VERSION "0.3.0"
 
 class DialInPlugin : public Plugin {
   public:
@@ -30,6 +30,9 @@ class DialInPlugin : public Plugin {
 
     // Called by WebUIPlugin::setupServer() before its catch-all handler.
     void attachRoutes(AsyncWebServer &server);
+
+    // True while a shot from a coffee being dialed in has no tasting feedback yet.
+    bool isFeedbackPending() const { return pendingShotId >= 0; }
 
     // Exposed for tests.
     static dialin::ProfileSpec toSpec(const Profile &profile);
@@ -46,11 +49,19 @@ class DialInPlugin : public Plugin {
     void handleLimitsSet(AsyncWebServerRequest *request, const std::string &body);
     void handleProfileCheck(AsyncWebServerRequest *request, const std::string &body, bool save);
     void handleData(AsyncWebServerRequest *request, const std::string &body);
+    void handleState(AsyncWebServerRequest *request);
+    void handleFeedback(AsyncWebServerRequest *request, const std::string &body);
+    void onShotSaved(int shotId);
+    String dialingBeanFor(const String &profileId, const String &profileLabel);
+    void loadState();
+    void saveState();
     void serveIndex(AsyncWebServerRequest *request);
 
     Controller *controller = nullptr;
     PluginManager *pluginManager = nullptr;
     dialin::SafetyLimits limits{};
+    int pendingShotId = -1;
+    String pendingBean;
 };
 
 extern DialInPlugin DialIn;

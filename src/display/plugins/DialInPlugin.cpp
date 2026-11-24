@@ -17,6 +17,7 @@ static constexpr const char *WWW_DIR = "/dialin/www/";
 static constexpr const char *INDEX_PATH = "/dialin/www/index.html";
 static constexpr const char *DATA_DIR = "/dialin/data";
 static constexpr const char *LIMITS_PATH = "/dialin/limits.json";
+static constexpr const char *STATE_PATH = "/dialin/state.json";
 static constexpr const char *DATA_PREFIX = "/api/dialin/data/";
 static constexpr size_t MAX_BODY = 64 * 1024;
 
@@ -139,6 +140,8 @@ void DialInPlugin::setup(Controller *_controller, PluginManager *_pluginManager)
     pluginManager = _pluginManager;
     loadLimits();
     installApp();
+    loadState();
+    pluginManager->on("evt:history-shot-saved", [this](Event const &event) { onShotSaved(event.getInt("id")); });
     ESP_LOGI(TAG, "Dial-in plugin %s ready (storage: %s)", DIALIN_PLUGIN_VERSION, storage() ? "yes" : "no SD card");
 }
 
@@ -216,6 +219,103 @@ void DialInPlugin::installApp() {
     }
     ESP_LOGI(TAG, "Installed Dial-in app %s (%u files, %u bytes)", dialin_app::VERSION, (unsigned)dialin_app::FILE_COUNT,
              (unsigned)written);
+}
+
+// ---------------------------------------------------------------- shot feedback
+
+void DialInPlugin::loadState() {
+    pendingShotId = -1;
+    pendingBean = "";
+    fs::FS *fs = storage();
+    if (fs == nullptr || !fs->exists(STATE_PATH))
+        return;
+    File f = fs->open(STATE_PATH, "r");
+    if (!f)
+        return;
+    JsonDocument doc;
+    if (deserializeJson(doc, f) == DeserializationError::Ok) {
+        pendingShotId = doc["pendingShotId"] | -1;
+        pendingBean = doc["beanId"] | "";
+    }
+    f.close();
+}
+
+void DialInPlugin::saveState() {
+    fs::FS *fs = storage();
+    if (fs == nullptr || !ensureDir(*fs, ROOT_DIR))
+        return;
+    File f = fs->open(STATE_PATH, "w");
+    if (!f)
+        return;
+    JsonDocument doc;
+    doc["pendingShotId"] = pendingShotId;
+    doc["beanId"] = pendingBean;
+    serializeJson(doc, f);
+    f.close();
+}
+
+// The coffee (bean record id) whose profile this is, if that coffee is still being
+// dialed in. Salami shots always count, so their tasting can't be skipped silently.
+String DialInPlugin::dialingBeanFor(const String &profileId, const String &profileLabel) {
+    fs::FS *fs = storage();
+    if (fs == nullptr)
+        return "";
+    String dir = String(DATA_DIR) + "/beans";
+    File d = fs->open(dir, "r");
+    if (!d || !d.isDirectory())
+        return profileLabel.startsWith("Salami") ? "salami" : "";
+    String found;
+    File f = d.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            JsonDocument doc;
+            if (deserializeJson(doc, f) == DeserializationError::Ok) {
+                String mode = doc["mode"] | "";
+                String pid = doc["profileId"] | "";
+                if (pid == profileId && (mode == "dialing" || mode == "recalibrate"))
+                    found = doc["id"] | "";
+            }
+        }
+        f.close();
+        if (found.length())
+            break;
+        f = d.openNextFile();
+    }
+    if (found.isEmpty() && profileLabel.startsWith("Salami"))
+        found = "salami";
+    return found;
+}
+
+void DialInPlugin::onShotSaved(int shotId) {
+    Profile &profile = controller->getProfileManager()->getSelectedProfile();
+    String bean = dialingBeanFor(profile.id, profile.label);
+    if (bean.isEmpty())
+        return;
+    pendingShotId = shotId;
+    pendingBean = bean;
+    saveState();
+    ESP_LOGI(TAG, "Shot %d needs Dial-in feedback (%s)", shotId, bean.c_str());
+}
+
+void DialInPlugin::handleState(AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["pendingShotId"] = pendingShotId;
+    doc["beanId"] = pendingBean;
+    sendJson(request, 200, doc);
+}
+
+// Body: {"shotId": n}. Clears the pending feedback (rated or skipped by the user).
+void DialInPlugin::handleFeedback(AsyncWebServerRequest *request, const std::string &body) {
+    JsonDocument in;
+    deserializeJson(in, body);
+    int shotId = in["shotId"] | -1;
+    if (shotId < 0 || shotId == pendingShotId) {
+        pendingShotId = -1;
+        pendingBean = "";
+        saveState();
+    }
+    handleState(request);
 }
 
 // ---------------------------------------------------------------- limits
@@ -361,6 +461,9 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
     }
 
     server.on("/api/dialin/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus(request); });
+    server.on("/api/dialin/state", HTTP_GET, [this](AsyncWebServerRequest *request) { handleState(request); });
+    onWithBody(server, "/api/dialin/feedback", HTTP_POST,
+               [this](AsyncWebServerRequest *request, const std::string &body) { handleFeedback(request, body); });
     server.on("/api/dialin/limits", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLimitsGet(request); });
     onWithBody(server, "/api/dialin/limits", HTTP_POST,
                [this](AsyncWebServerRequest *request, const std::string &body) { handleLimitsSet(request, body); });

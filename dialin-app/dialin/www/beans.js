@@ -11,6 +11,7 @@ import {
   startingGrind,
   roastDefaults,
   slug,
+  fmtGrind,
 } from './lib/dialin.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -81,7 +82,10 @@ export function initBeans({ gm, root, toast, getSettings }) {
           return `<li><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
-            ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">Set up a starting profile ›</button>` : ''}</li>`;
+            ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
+            ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">Set up a starting profile ›</button>` : ''}
+            ${b.profileId && b.mode === 'dialed' ? `<button class="link" data-act="set-mode" data-mode="recalibrate" data-id="${esc(b.id)}">Recalibrate (ask after every shot again) ›</button>` : ''}
+            ${b.profileId && (b.mode === 'dialing' || b.mode === 'recalibrate') ? `<button class="link" data-act="set-mode" data-mode="dialed" data-id="${esc(b.id)}">Stop asking, it's dialed in ›</button>` : ''}</li>`;
         })
         .join('');
     } catch (err) {
@@ -311,7 +315,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const { bean, rec, plan } = state;
     root.innerHTML = `<div class="card"><h2>Ready for your first shot</h2>
       <p>The profile <strong>${esc(bean.name)}</strong> is active on the machine: ${plan.dose} g in, ${rec.yieldG} g out at ${rec.temperature} °C.</p>
-      <p class="muted">The coffee is now in <em>Dialing in</em> mode. After each shot, rate it and the next step will be suggested.</p>
+      ${state.bean.dial?.grind != null ? `<p>Grind at <strong>${esc(fmtGrind(state.bean.dial.grind, settings().grinder?.step))}</strong>. The profile's name on the machine shows the grind to use.</p>` : ''}
+      <p class="muted">The coffee is now in <em>Dialing in</em> mode: after each shot you'll be asked to rate it here, and the machine asks before the next shot until you do.</p>
       <button class="primary" data-act="list">Done</button></div>`;
   }
 
@@ -439,7 +444,14 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const box = root.querySelector('#rec-errors');
     try {
       const profile = startingProfile(state.bean, state.rec, state.plan.dose);
-      if (state.bean.profileId) profile.id = undefined; // always a fresh profile from a salami
+      const g = settings().grinder;
+      let grind = startingGrind(state.bean, g);
+      const gstep = g?.step || 0.25;
+      if (grind != null && state.rec.grindAdvice !== 'keep') {
+        const finer = g?.finerIsLower === false ? 1 : -1;
+        grind += (state.rec.grindAdvice === 'finer' ? finer : -finer) * gstep;
+      }
+      if (grind != null) profile.label = `${state.bean.name} · grind ${fmtGrind(grind, gstep)}`.slice(0, 40);
       const res = await gm.saveProfile(profile, true);
       if (!res.ok) {
         box.innerHTML = `<ul class="errors">${(res.errors || []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`;
@@ -452,10 +464,12 @@ export function initBeans({ gm, root, toast, getSettings }) {
         recipe: state.bean.recipe,
         start: { dose: state.plan.dose, ...state.rec },
         salami: state.feedback ? { plan: state.plan, cups: state.feedback.cups, blendBest: state.feedback.blendBest, shotId: state.feedback.shotId } : null,
+        dial: { grind, step: 2 * gstep, lastDir: 0, goodStreak: 0 },
         updatedAt: new Date().toISOString(),
       };
       await gm.putRecord('beans', bean.id, bean);
       state.bean = bean;
+      if (state.feedback?.shotId != null) gm.clearFeedback(state.feedback.shotId).catch(() => {});
       if (state.run?.profileId) {
         gm.request('req:profiles:delete', { id: state.run.profileId }).catch(() => {});
       }
@@ -473,7 +487,13 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const act = btn.dataset.act;
     const i = btn.dataset.i !== undefined ? Number(btn.dataset.i) : null;
     try {
-      if (act === 'list') show('list');
+      if (act === 'list') {
+        if (state.feedback?.shotId != null && ['salami-feedback', 'recommendation'].includes(state.view)) {
+          gm.clearFeedback(state.feedback.shotId).catch(() => {});
+        }
+        state.run = null;
+        show('list');
+      }
       else if (act === 'add') show('add');
       else if (act === 'manual') show('review', { bean: emptyBean(root.querySelector('#bean-name')?.value) });
       else if (act === 'research') {
@@ -498,6 +518,13 @@ export function initBeans({ gm, root, toast, getSettings }) {
       } else if (act === 'resume') {
         state.bean = await gm.getRecord('beans', btn.dataset.id);
         show('salami-offer');
+      } else if (act === 'set-mode') {
+        const bean = await gm.getRecord('beans', btn.dataset.id);
+        const mode = btn.dataset.mode;
+        await gm.putRecord('beans', bean.id, { ...bean, mode, dial: { ...(bean.dial || {}), goodStreak: 0 }, updatedAt: new Date().toISOString() });
+        if (mode === 'dialed') gm.clearFeedback(-1).catch(() => {});
+        toast(mode === 'dialed' ? 'Prompts off for this coffee.' : 'Rating prompts are back on for this coffee.', 'ok');
+        render();
       } else if (act === 'salami-setup') show('salami-setup', { plan: null });
       else if (act === 'skip-salami') standardStart();
       else if (act === 'load-salami') await loadSalami(btn);
@@ -525,7 +552,13 @@ export function initBeans({ gm, root, toast, getSettings }) {
   gm.addEventListener('status', e => onStatus(e.detail));
   gm.addEventListener('evt:history-shot-saved', onShotSaved);
 
-  return { render, show, refreshList: () => state.view === 'list' && render() };
+  return {
+    render,
+    show,
+    refreshList: () => state.view === 'list' && render(),
+    // The salami flow handles its own tasting; the per-shot prompt waits meanwhile.
+    isBusy: () => ['salami-run', 'salami-feedback', 'recommendation'].includes(state.view),
+  };
 }
 
 function emptyBean(name = '') {

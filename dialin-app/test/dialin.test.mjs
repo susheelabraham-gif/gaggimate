@@ -115,3 +115,74 @@ test('slug makes safe record ids', () => {
   assert.equal(slug('Café Ñandú — Lot #4'), 'cafe-nandu-lot-4');
   assert.match(slug('x'.repeat(80)), /^[a-z0-9-]{1,40}$/);
 });
+
+import { nextStep, fmtGrind } from '../dialin/www/lib/dialin.js';
+const df64 = { step: 0.5, finerIsLower: true };
+const base = { dial: { grind: 15, step: 1, lastDir: 0, goodStreak: 0 }, grinder: df64, temperature: 93 };
+
+test('sour and fast grinds finer by the step', () => {
+  const r = nextStep({ ...base, shot: { seconds: 18, yieldG: 36, targetYield: 36 }, feedback: { taste: 'sour', rating: 2 } });
+  assert.equal(r.grindDir, -1);
+  assert.equal(r.nextGrind, 14);
+  assert.equal(r.tempDelta, 0);
+});
+
+test('bitter and slow grinds coarser; higher-is-finer grinders move the other way', () => {
+  const r = nextStep({ ...base, shot: { seconds: 42, yieldG: 36, targetYield: 36 }, feedback: { taste: 'bitter', rating: 2 } });
+  assert.equal(r.nextGrind, 16);
+  const r2 = nextStep({ ...base, grinder: { step: 0.5, finerIsLower: false }, shot: { seconds: 42 }, feedback: { taste: 'bitter' } });
+  assert.equal(r2.nextGrind, 14);
+});
+
+test('sour on time changes temperature, not grind', () => {
+  const r = nextStep({ ...base, shot: { seconds: 30, yieldG: 36, targetYield: 36 }, feedback: { taste: 'sour', rating: 3 } });
+  assert.equal(r.tempDelta, 1);
+  assert.equal(r.grindDir, 0);
+  assert.equal(r.nextGrind, 15);
+});
+
+test('temperature at the limit falls back to grind', () => {
+  const r = nextStep({ ...base, temperature: 96, shot: { seconds: 30 }, feedback: { taste: 'sour' }, limits: { maxTemperature: 96 } });
+  assert.equal(r.tempDelta, 0);
+  assert.equal(r.grindDir, -1);
+});
+
+test('step halves when the direction flips, never below the grinder step', () => {
+  const dial = { grind: 14, step: 1, lastDir: -1, goodStreak: 0 };
+  const r = nextStep({ ...base, dial, shot: { seconds: 40, yieldG: 36, targetYield: 36 }, feedback: { taste: 'bitter' } });
+  assert.equal(r.grindStep, 0.5);
+  assert.equal(r.nextGrind, 14.5);
+  const r2 = nextStep({ ...base, dial: { ...r.dial }, shot: { seconds: 18 }, feedback: { taste: 'sour' } });
+  assert.equal(r2.grindStep, 0.5);
+});
+
+test('two good shots in a row mean dialed in', () => {
+  const good = { shot: { seconds: 29, yieldG: 36, targetYield: 36 }, feedback: { taste: 'balanced', rating: 4 } };
+  const a = nextStep({ ...base, ...good });
+  assert.equal(a.dialedIn, false);
+  const b = nextStep({ ...base, dial: a.dial, ...good });
+  assert.equal(b.dialedIn, true);
+  const c = nextStep({ ...base, dial: b.dial, shot: { seconds: 29 }, feedback: { taste: 'sour', rating: 2 } });
+  assert.equal(c.goodStreak, 0);
+});
+
+test('short yield counts as slow', () => {
+  const r = nextStep({ ...base, shot: { seconds: 30, yieldG: 25, targetYield: 36 }, feedback: { taste: 'bitter' } });
+  assert.equal(r.timing, 'slow');
+  assert.equal(r.grindDir, 1);
+});
+
+test('salami cups are flow-controlled and last long enough to swap', () => {
+  for (const level of ['light', 'medium', 'dark']) {
+    const plan = planSalami({ roastLevel: level }, 18);
+    const prof = salamiProfile({ name: 'x' }, plan);
+    for (const ph of prof.phases.slice(1)) {
+      assert.equal(ph.pump.target, 'flow');
+      assert.ok(ph.pump.pressure > 0 && ph.pump.pressure <= 10);
+    }
+    const cupSeconds = plan.cups[0].water / plan.cupFlow;
+    assert.ok(cupSeconds >= 9, `${level}: ${cupSeconds.toFixed(1)} s per cup`);
+  }
+  assert.equal(fmtGrind(14.5, 0.5), '14.5');
+  assert.equal(fmtGrind(15, 0.5), '15');
+});
