@@ -1,0 +1,67 @@
+# Builds the Dial-in edition of the display firmware and the SD-card app files.
+name: Build Dial-in firmware
+# Unlike build.yml it needs no update-server secrets, so it runs in a personal fork.
+on:
+  push:
+    branches: [dialin, dialin-1.10]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build web UI
+        run: scripts/build_webui.sh
+      - name: Test safety validator
+        run: pio test -e native -f test_dialin_safety
+      - name: Test app logic
+        run: cd dialin-app && npm test
+      - name: Tag the GaggiMate base version
+        # Forks don't copy tags. GaggiMate's update checker parses the version
+        # (git describe) at start-up and crashes on a bare commit hash, so give
+        # the v1.10.0 base commit its tag: the build becomes v1.10.0-N-g<sha>.
+        # Drop this workflow's own release tags so git describe can't pick them.
+        run: |
+          git tag -l 'dialin-build-*' | xargs -r git tag -d
+          git tag -f v1.10.0 34bf9fc
+          git describe --tags --dirty --exclude nightly --exclude db
+      - run: mkdir -p out
+      - name: Build display firmware
+        run: |
+          python3 scripts/embed_dialin_app.py
+          pio run -e display
+          grep -E 'BUILD_GIT_VERSION "v[0-9]+\.[0-9]+\.[0-9]+' src/version.h || { echo "Bad firmware version:"; cat src/version.h; exit 1; }
+          cat src/version.h
+          cp .pio/build/display/firmware.elf out/display-firmware.elf 2>/dev/null || true
+          cp .pio/build/display/firmware.bin out/display-firmware.bin
+          cp .pio/build/display/partitions.bin out/display-partitions.bin
+          cp .pio/build/display/bootloader.bin out/display-bootloader.bin
+          cp docs/boot_app0.bin out/boot_app0.bin
+      - name: Package SD-card app
+        run: cd dialin-app && zip -r ../out/dialin-sdcard.zip dialin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gaggimate-dialin-firmware
+          path: out/*
+      - name: Publish as a release (easy download page)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="dialin-build-${{ github.run_number }}"
+          gh release create "$tag" out/* --target "${{ github.sha }}" --prerelease \
+            --title "Dial-in build ${{ github.run_number }}" \
+            --notes "Flash boot_app0.bin at 0xe000 and display-firmware.bin at 0x10000. The app is built in and copied to the SD card on start-up. See dialin-app/README.md."

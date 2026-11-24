@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script>
+      // Follow GaggiMate's theme (Settings → Theme), stored by its web UI in this browser.
+      (function () {
+        function apply() {
+          var t = 'system';
+          try {
+            t = localStorage.getItem('gaggimate-daisyui-theme') || 'system';
+          } catch (e) {}
+          if (['light', 'dark', 'coffee', 'nord'].indexOf(t) < 0)
+            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', t);
+        }
+        apply();
+        addEventListener('storage', apply);
+        addEventListener('pageshow', apply);
+        matchMedia('(prefers-color-scheme: dark)').addEventListener('change', apply);
+      })();
+    </script>
+    <title>Dial-in · GaggiMate</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="back" href="/" title="Back to GaggiMate">‹ GaggiMate</a>
+      <h1>Dial-in</h1>
+      <span id="conn" class="conn off" title="Machine connection">Connecting…</span>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="beans">Coffees</button>
+      <button role="tab" data-tab="shot" aria-selected="true">Last shot</button>
+      <button role="tab" data-tab="profiles">Profiles</button>
+      <button role="tab" data-tab="settings">Settings</button>
+    </nav>
+
+    <main>
+      <section id="tab-beans" class="tab" hidden></section>
+
+      <section id="tab-shot" class="tab">
+        <div id="machine" class="card machine"></div>
+        <div id="shot" class="card"><p class="muted">Loading the last shot…</p></div>
+      </section>
+
+      <section id="tab-profiles" class="tab" hidden>
+        <div class="card">
+          <h2>Profiles on the machine</h2>
+          <p class="muted">Each profile is checked against the safety limits. Profiles outside them still brew normally; the assistant just won't create or edit profiles like them.</p>
+          <ul id="profiles" class="list"></ul>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab" hidden>
+        <div class="card">
+          <h2>Safety limits</h2>
+          <p class="muted">Every profile the assistant saves must stay inside these. You can tighten them; the machine never allows more than its hard limits.</p>
+          <form id="limits" class="limits"></form>
+        </div>
+        <div class="card">
+          <h2>Grinder and dose</h2>
+          <form id="appsettings" class="limits"></form>
+        </div>
+        <div class="card">
+          <h2>AI look-ups</h2>
+          <p class="muted">Coffees are looked up with Claude using your own Anthropic API key. The key stays in this browser only; it is not saved on the machine. Web search must be enabled for your key's organization in the Claude Console.</p>
+          <form id="aisettings" class="limits"></form>
+        </div>
+        <div class="card">
+          <h2>Storage and version</h2>
+          <dl id="storage" class="facts"></dl>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

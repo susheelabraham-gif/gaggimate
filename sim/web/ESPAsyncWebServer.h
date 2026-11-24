@@ -151,8 +151,10 @@ class AsyncStaticWebHandler {
 
 // Only prefix() is used; plain const char* URIs keep their exact-match overloads.
 struct AsyncURIMatcher {
-    static AsyncURIMatcher prefix(const char *uri) { return AsyncURIMatcher{uri}; }
+    static AsyncURIMatcher prefix(const char *uri) { return AsyncURIMatcher{uri, true}; }
+    static AsyncURIMatcher exact(const char *uri) { return AsyncURIMatcher{uri, false}; }
     std::string uri;
+    bool isPrefix = true;
 };
 
 // Returned by on(AsyncURIMatcher, ...); the reference is only valid until the next on() call.
@@ -168,6 +170,7 @@ class AsyncCallbackWebHandler {
     ArRequestHandlerFunction _handler;
     bool _prefix = false;
     ArBodyHandlerFunction _onBody; // called once with the whole body (the real library streams chunks)
+    bool _compat = false;
     ArRequestFilterFunction _filter;
 };
 
@@ -176,9 +179,12 @@ class AsyncWebServer {
     explicit AsyncWebServer(uint16_t port) : _port(port) {}
     ~AsyncWebServer();
 
-    void on(const char *uri, ArRequestHandlerFunction handler) { _routes.push_back({HTTP_ANY, uri, std::move(handler)}); }
+    // Plain string URIs match like the real library's backward-compatible matcher:
+    // the URI itself or anything below it ("/x" also matches "/x/...").
+    void on(const char *uri, ArRequestHandlerFunction handler) { on(uri, HTTP_ANY, std::move(handler)); }
     void on(const char *uri, WebRequestMethod method, ArRequestHandlerFunction handler) {
         _routes.push_back({(int)method, uri, std::move(handler)});
+        _routes.back()._compat = true;
     }
     void on(const char *uri, WebRequestMethod method, ArRequestHandlerFunction handler, ArUploadHandlerFunction,
             ArBodyHandlerFunction onBody) {
@@ -187,7 +193,7 @@ class AsyncWebServer {
         _routes.push_back(std::move(route));
     }
     AsyncCallbackWebHandler &on(const AsyncURIMatcher &matcher, WebRequestMethod method, ArRequestHandlerFunction handler) {
-        _routes.push_back({(int)method, matcher.uri, std::move(handler), true});
+        _routes.push_back({(int)method, matcher.uri, std::move(handler), matcher.isPrefix});
         return _routes.back();
     }
     void onNotFound(ArRequestHandlerFunction handler) { _notFound = std::move(handler); }

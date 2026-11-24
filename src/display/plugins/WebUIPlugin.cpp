@@ -10,6 +10,7 @@
 #include <display/core/ProfileManager.h>
 #include <display/models/profile.h>
 #include <display/plugins/BLEScalePlugin.h>
+#include <display/plugins/DialInPlugin.h>
 #include <display/plugins/ShotHistoryPlugin.h>
 #include <display/webassets/web_ui_manifest.h>
 #include <esp32-hal-psram.h>
@@ -245,6 +246,7 @@ void WebUIPlugin::setupServer() {
     // The web UI is embedded in firmware flash and served from the memory-mapped blob (see serveWebAsset). It is no
     // longer in LittleFS, so OTA never touches the partition holding profiles/shots. The catch-all onNotFound handles
     // every path not claimed by an explicit server.on()/api route above. [GM-106]
+    DialIn.attachRoutes(server); // Dial-in app (/dialin/) and its API (/api/dialin/)
     server.onNotFound([this](AsyncWebServerRequest *request) { serveWebAsset(request); });
     wsHandler.attach(server);
 }

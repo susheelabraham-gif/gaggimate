@@ -545,7 +545,9 @@ bool AsyncWebServer::handleHttp(Conn &c) {
 void AsyncWebServer::dispatch(Conn &c, AsyncWebServerRequest &req) {
     std::string path(req._url.c_str());
     for (auto &r : _routes) {
-        const bool uriMatch = r._prefix ? path.rfind(r._uri, 0) == 0 : r._uri == path;
+        const bool uriMatch = r._prefix   ? path.rfind(r._uri, 0) == 0
+                              : r._compat ? (r._uri == path || path.rfind(r._uri + "/", 0) == 0)
+                                          : r._uri == path;
         if ((r._method == HTTP_ANY || (r._method & req._method)) && uriMatch && (!r._filter || r._filter(&req))) {
             if (r._onBody && !req._body.empty())
                 r._onBody(&req, (uint8_t *)req._body.data(), req._body.size(), 0, req._body.size());
@@ -556,7 +558,15 @@ void AsyncWebServer::dispatch(Conn &c, AsyncWebServerRequest &req) {
     for (auto &s : _static) {
         if (path.rfind(s.uri, 0) == 0) { // prefix match
             std::string rel = path.substr(s.uri.size());
-            req.send(*s.fs, String((s.path + rel).c_str()), "application/octet-stream");
+            // Content type by extension, as the real ESPAsyncWebServer does.
+            static const std::pair<const char *, const char *> kTypes[] = {
+                {".html", "text/html"}, {".js", "application/javascript"}, {".css", "text/css"},
+                {".json", "application/json"}, {".svg", "image/svg+xml"}, {".png", "image/png"}};
+            const char *type = "application/octet-stream";
+            for (auto &t : kTypes)
+                if (rel.size() >= strlen(t.first) && rel.compare(rel.size() - strlen(t.first), std::string::npos, t.first) == 0)
+                    type = t.second;
+            req.send(*s.fs, String((s.path + rel).c_str()), type);
             return;
         }
     }

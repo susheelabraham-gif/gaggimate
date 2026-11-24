@@ -14,6 +14,7 @@ enum WarningType {
     WARNING_TEMPERATURE,
     WARNING_BACKFLUSH,
     WARNING_DESCALING,
+    WARNING_DIALIN_FEEDBACK, // a Dial-in shot still needs tasting feedback
     WARNING_TYPE_COUNT
 };
 

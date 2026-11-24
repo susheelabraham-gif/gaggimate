@@ -22,6 +22,7 @@
 #include <display/plugins/SetupWizardPlugin.h>
 #include <display/plugins/ShotHistoryPlugin.h>
 #include <display/plugins/SmartDosePlugin.h>
+#include <display/plugins/DialInPlugin.h>
 #include <display/plugins/SmartGrindPlugin.h>
 #include <display/plugins/WebUIPlugin.h>
 #include <display/plugins/mahlkonig/MahlkonigPlugin.h>
@@ -104,6 +105,7 @@ void Controller::setup() {
         pluginManager->registerPlugin(new MQTTPlugin());
     }
 #endif
+    pluginManager->registerPlugin(&DialIn); // before WebUIPlugin: it attaches routes there
     pluginManager->registerPlugin(new WebUIPlugin());
     if (settings.isMahlkonigActive()) {
         pluginManager->registerPlugin(new MahlkonigPlugin());

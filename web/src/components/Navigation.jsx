@@ -5,6 +5,7 @@ import { faList } from '@fortawesome/free-solid-svg-icons/faList';
 import { faTimeline } from '@fortawesome/free-solid-svg-icons/faTimeline';
 import { faCog } from '@fortawesome/free-solid-svg-icons/faCog';
 import { faMobileScreen } from '@fortawesome/free-solid-svg-icons/faMobileScreen';
+import { faMugHot } from '@fortawesome/free-solid-svg-icons/faMugHot';
 import { faMagnifyingGlassChart } from '@fortawesome/free-solid-svg-icons/faMagnifyingGlassChart';
 import { faChartSimple } from '@fortawesome/free-solid-svg-icons/faChartSimple';
 import { faCircleChevronLeft } from '@fortawesome/free-solid-svg-icons/faCircleChevronLeft';
@@ -76,6 +77,13 @@ const NAVIGATION_SECTIONS = [
       { label: msg`Shot Analyzer`, link: '/analyzer', icon: faMagnifyingGlassChart, isNew: false },
       { label: msg`Statistics`, link: '/statistics', icon: faChartSimple, isNew: false },
     ],
+  },
+  {
+    // Dial-in assistant: a separate app served from the SD card by DialInPlugin.
+    // `native` sets target=_top so the router lets the browser load the page normally.
+    id: 'dialin',
+    showDivider: true,
+    items: [{ label: 'Dial-in', link: '/dialin/', icon: faMugHot, native: true }],
   },
   {
     id: 'settings',
@@ -160,6 +168,7 @@ function MenuItem({
   link,
   editLink,
   editIcon,
+  native = false,
 }) {
   const { path } = useLocation();
   const isActive = path === link;
@@ -181,6 +190,7 @@ function MenuItem({
     <div className={`flex h-12 flex-row ${collapsed ? 'w-12' : 'w-full'}`}>
       <a
         href={link}
+        target={native ? '_top' : undefined}
         className={`flex-grow ${className} relative`}
         aria-label={collapsed ? label : undefined}
         aria-current={isActive ? 'page' : undefined}
