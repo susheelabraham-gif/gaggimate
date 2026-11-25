@@ -634,3 +634,17 @@ body.locked {
 .brew-chips .pill {
   white-space: nowrap;
 }
+
+button.danger {
+  background: transparent;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
+.ok-text {
+  color: var(--ok);
+}
+.card hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 16px 0 12px;
+}

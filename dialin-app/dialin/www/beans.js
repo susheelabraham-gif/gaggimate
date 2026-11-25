@@ -84,6 +84,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
+            <button class="link" data-act="details" data-id="${esc(b.id)}">Details, look up again or delete ›</button>
             ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">Set up a starting profile ›</button>` : ''}
             ${b.profileId && b.mode === 'dialed' ? `<button class="link" data-act="set-mode" data-mode="recalibrate" data-id="${esc(b.id)}">Recalibrate (ask after every shot again) ›</button>` : ''}
             ${b.profileId && (b.mode === 'dialing' || b.mode === 'recalibrate') ? `<button class="link" data-act="set-mode" data-mode="dialed" data-id="${esc(b.id)}">Stop asking, it's dialed in ›</button>` : ''}</li>`;
@@ -125,9 +126,21 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const sources = b.sources?.length
       ? `<p class="small muted">Sources: ${b.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a>`).join(' · ')}</p>`
       : '';
-    root.innerHTML = `<div class="card"><div class="row spread"><h2>Check the details</h2>
+    const edit = state.view === 'edit';
+    const bagFields = edit
+      ? ''
+      : `<div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}</div>
+      ${beanField('Bag size (g)', 'bagSizeG', b.bagSizeG ?? 250, 'type="number" inputmode="numeric"')}`;
+    const buttons = edit
+      ? `<div class="row gap"><button class="primary" data-act="save-edit">Save changes</button>
+        <button data-act="relookup" ${aiSettings.apiKey ? '' : 'disabled title="Add your API key in Settings"'}>Look up again</button>
+        <button class="link" data-act="list">Cancel</button></div>
+        <hr/><button class="danger" data-act="delete-bean">Delete this coffee</button>`
+      : `<div class="row gap"><button class="primary" data-act="save-bean">Save coffee</button><button class="link" data-act="list">Cancel</button></div>`;
+    root.innerHTML = `<div class="card"><div class="row spread"><h2>${edit ? esc(b.name) : 'Check the details'}</h2>
       ${b.confidence ? `<span class="pill ${b.confidence === 'high' ? 'ok' : b.confidence === 'low' ? 'warn' : ''}">${b.confidence} confidence</span>` : ''}</div>
-      <p class="muted small">Correct anything that's wrong. Roast level matters most: it sets the salami plan.</p>
+      ${state.relooked ? '<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.</p>' : ''}
+      ${state.relooked ? '' : `<p class="muted small">${edit ? 'Edit the details or look the coffee up again. Your profile, grind and rated shots are kept.' : "Correct anything that's wrong. Roast level matters most: it sets the salami plan."}</p>`}
       ${beanField('Coffee name', 'name', b.name, 'required')}
       ${beanField('Roaster', 'roaster', b.roaster)}
       <div class="grid2">${beanField('Country', 'origin.country', b.origin.country)}${beanField('Region', 'origin.region', b.origin.region)}</div>
@@ -135,12 +148,11 @@ export function initBeans({ gm, root, toast, getSettings }) {
       <label class="field"><span>Roast level${b.roastLevelGuessed ? ' <span class="warn-text">(not found, please check)</span>' : ''}</span>
         <select data-k="roastLevel">${ROAST_LEVELS.map(l => `<option ${l === b.roastLevel ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       ${beanField('Tasting notes', 'tastingNotes', b.tastingNotes.join(', '))}
-      <div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}</div>
-      ${beanField('Bag size (g)', 'bagSizeG', b.bagSizeG ?? 250, 'type="number" inputmode="numeric"')}
+      ${bagFields}
       <label class="field"><span>Roasted for</span>
         <select data-k="roastedFor">${[['', 'not known'], ['espresso', 'espresso'], ['filter', 'filter'], ['omni', 'both (omni roast)']].map(([v, l]) => `<option value="${v}" ${v === (b.roastedFor || '') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       ${brew}${recipe}${community}${sources}
-      <div class="row gap"><button class="primary" data-act="save-bean">Save coffee</button><button class="link" data-act="list">Cancel</button></div></div>`;
+      ${buttons}</div>`;
   }
 
   function readReview() {
@@ -154,6 +166,15 @@ export function initBeans({ gm, root, toast, getSettings }) {
       else b[k] = v;
     }
     return b;
+  }
+
+  function renderDelete() {
+    const b = state.bean;
+    root.innerHTML = `<div class="card"><h2>Delete ${esc(b.name)}?</h2>
+      <p>This removes the coffee from Dial-in: its details, its bags and its rating log${b.shots?.length ? ` (${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''})` : ''}.</p>
+      <p class="muted small">Kept on the machine: its shot profile${b.profileId ? '' : ' (if any)'} and your shot history with notes. Delete the profile in GaggiMate's Profiles page if you no longer want it.</p>
+      <div class="row gap"><button class="danger" data-act="delete-confirm">Delete coffee</button>
+      <button class="link" data-act="details" data-id="${esc(b.id)}">Keep it</button></div></div>`;
   }
 
   function renderNewBatch() {
@@ -329,6 +350,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
       list: renderList,
       add: renderAdd,
       review: renderReview,
+      edit: renderReview,
+      delete: renderDelete,
       'new-batch': renderNewBatch,
       'salami-offer': renderSalamiOffer,
       'salami-setup': renderSalamiSetup,
@@ -369,6 +392,63 @@ export function initBeans({ gm, root, toast, getSettings }) {
       await gm.putRecord('batches', batch.id, batch);
       done();
       show('salami-offer');
+    } catch (err) {
+      done();
+      toast(err.message, 'error');
+    }
+  }
+
+  async function openDetails(id) {
+    const bean = await gm.getRecord('beans', id);
+    if (!bean) throw new Error('That coffee no longer exists.');
+    show('edit', { bean: { ...emptyBean(), ...bean }, relooked: false });
+  }
+
+  async function saveEdit(btn) {
+    const b = readReview();
+    if (!b.name) return toast('Give the coffee a name.', 'error');
+    const done = busy(btn, 'Saving…');
+    try {
+      const current = (await gm.getRecord('beans', b.id)) || {};
+      // Keep everything the dial-in loop owns; only the descriptive fields change.
+      const merged = { ...current, ...b, id: current.id || b.id, profileId: current.profileId, mode: current.mode, dial: current.dial, shots: current.shots, salami: current.salami, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
+      delete merged.roastLevelGuessed;
+      await gm.putRecord('beans', merged.id, merged);
+      done();
+      toast('Coffee updated.', 'ok');
+      show('list', { relooked: false });
+    } catch (err) {
+      done();
+      toast(err.message, 'error');
+    }
+  }
+
+  // Research the coffee again and fold the result into the form (not saved yet).
+  async function lookUpAgain(btn) {
+    const b = readReview();
+    const done = busy(btn, 'Looking it up… (up to a minute)');
+    try {
+      const found = await researchBean({ name: [b.roaster, b.name].filter(Boolean).join(' ') });
+      done();
+      show('edit', { bean: mergeResearch(b, found), relooked: true });
+    } catch (err) {
+      done();
+      toast(err.message, 'error');
+    }
+  }
+
+  async function deleteBean(btn) {
+    const b = state.bean;
+    const done = busy(btn, 'Deleting…');
+    try {
+      const batches = (await gm.getAll('batches')).filter(x => x.beanId === b.id);
+      for (const x of batches) await gm.deleteRecord('batches', x.id);
+      await gm.deleteRecord('beans', b.id);
+      const st = await gm.getState().catch(() => null);
+      if (st?.beanId === b.id && st.pendingShotId >= 0) await gm.clearFeedback(st.pendingShotId).catch(() => {});
+      done();
+      toast(`${b.name} deleted.`, 'ok');
+      show('list');
     } catch (err) {
       done();
       toast(err.message, 'error');
@@ -515,6 +595,11 @@ export function initBeans({ gm, root, toast, getSettings }) {
           toast(err.message, 'error');
         }
       } else if (act === 'save-bean') await saveBean(btn);
+      else if (act === 'details') await openDetails(btn.dataset.id);
+      else if (act === 'save-edit') await saveEdit(btn);
+      else if (act === 'relookup') await lookUpAgain(btn);
+      else if (act === 'delete-bean') show('delete', { bean: { ...state.bean, ...readReview() } });
+      else if (act === 'delete-confirm') await deleteBean(btn);
       else if (act === 'batch-yes') await confirmBatch();
       else if (act === 'batch-no') {
         state.bean = { ...state.bean, name: `${state.bean.name} (2)` };
@@ -608,4 +693,28 @@ function brewHtml(b) {
       : '';
   return `<p class="small"><strong>Brew methods</strong> <span class="muted">★ recommended · ✕ not recommended</span></p>
     <div class="brew-chips">${chips}</div>${b.brewNote ? `<p class="small muted">${esc(b.brewNote)}</p>` : ''}${filterWarn}`;
+}
+
+// Fold a fresh lookup into an existing coffee: new brew-method, recipe, community and
+// source info replace the old; descriptive fields the user already has are kept.
+export function mergeResearch(bean, found) {
+  const keepOr = (a, b) => (a && (!Array.isArray(a) || a.length) ? a : b);
+  return {
+    ...bean,
+    origin: {
+      country: keepOr(bean.origin?.country, found.origin.country),
+      region: keepOr(bean.origin?.region, found.origin.region),
+      farm: keepOr(bean.origin?.farm, found.origin.farm),
+    },
+    process: keepOr(bean.process, found.process),
+    variety: keepOr(bean.variety, found.variety),
+    tastingNotes: keepOr(bean.tastingNotes, found.tastingNotes),
+    roastedFor: found.roastedFor || bean.roastedFor || '',
+    brewMethods: found.brewMethods,
+    brewNote: found.brewNote || bean.brewNote || '',
+    recipe: found.recipe || bean.recipe || null,
+    community: found.community.length ? found.community : bean.community || [],
+    sources: found.sources.length ? found.sources : bean.sources || [],
+    confidence: found.confidence,
+  };
 }

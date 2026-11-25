@@ -95,3 +95,20 @@ test('normalizeBean keeps known brew-method ratings and drops the rest', () => {
   assert.equal(b.brewMethods.bogus, undefined);
   assert.equal(normalizeBean({ roastedFor: 'turkish' }).roastedFor, '');
 });
+
+test('looking a coffee up again keeps its own details and adds the brew methods', async () => {
+  const { mergeResearch } = await import('../dialin/www/beans.js');
+  const bean = { id: 'hola-san-isidro', name: 'San Isidro', roaster: 'Hola', process: 'washed', tastingNotes: ['plum'],
+    origin: { country: 'Colombia', region: '', farm: '' }, profileId: 'abc', dial: { grind: 14 }, shots: [{ id: 1 }], community: [] };
+  const found = normalizeBean({ name: 'San Isidro', process: 'natural', origin: { country: 'Colombia', region: 'Huila' },
+    tastingNotes: ['cherry'], roastedFor: 'omni', brewMethods: { espresso: 'recommended', chemex: 'suitable' }, confidence: 'high' });
+  const m = mergeResearch(bean, found);
+  assert.equal(m.process, 'washed');
+  assert.deepEqual(m.tastingNotes, ['plum']);
+  assert.equal(m.origin.region, 'Huila');
+  assert.equal(m.brewMethods.espresso, 'recommended');
+  assert.equal(m.roastedFor, 'omni');
+  assert.equal(m.profileId, 'abc');
+  assert.equal(m.dial.grind, 14);
+  assert.equal(m.shots.length, 1);
+});
