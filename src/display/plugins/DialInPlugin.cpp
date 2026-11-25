@@ -330,6 +330,8 @@ void DialInPlugin::loadState() {
     if (deserializeJson(doc, f) == DeserializationError::Ok) {
         pendingShotId = doc["pendingShotId"] | -1;
         pendingBean = doc["beanId"] | "";
+        knownOffset = doc["tempOffset"] | (int)INT32_MIN;
+        lastShotId = doc["lastShotId"] | -1;
     }
     f.close();
 }
@@ -344,6 +346,8 @@ void DialInPlugin::saveState() {
     JsonDocument doc;
     doc["pendingShotId"] = pendingShotId;
     doc["beanId"] = pendingBean;
+    doc["tempOffset"] = knownOffset;
+    doc["lastShotId"] = lastShotId;
     serializeJson(doc, f);
     f.close();
 }
@@ -381,6 +385,10 @@ String DialInPlugin::dialingBeanFor(const String &profileId, const String &profi
 }
 
 void DialInPlugin::onShotSaved(int shotId) {
+    if (shotId > lastShotId) {
+        lastShotId = shotId;
+        saveState();
+    }
     Profile &profile = controller->getProfileManager()->getSelectedProfile();
     if (stockProfileId.length() && stockProfileId == profile.id && shotId > stockShotId)
         shotsSinceStock++;
@@ -617,6 +625,7 @@ void DialInPlugin::handleStatus(AsyncWebServerRequest *request) {
     doc["appInstalled"] = fs != nullptr && (fs->exists(INDEX_GZ) || fs->exists(INDEX_PATH));
     doc["appVersion"] = dialin_app::VERSION;
     doc["busy"] = controller->isActive();
+    doc["tempOffset"] = controller->getSettings().getTemperatureOffset();
     if (controller->isSDCard()) {
         doc["totalBytes"] = (double)SD_MMC.totalBytes();
         doc["usedBytes"] = (double)SD_MMC.usedBytes();
@@ -824,6 +833,46 @@ void DialInPlugin::loop() {
         lastExpiryCheck = now;
         refreshExpiry();
     }
+    if (now - lastOffsetCheck > 2000) {
+        lastOffsetCheck = now;
+        checkTemperatureOffset();
+    }
+}
+
+void DialInPlugin::checkTemperatureOffset() {
+    fs::FS *fs = storage();
+    if (fs == nullptr || controller == nullptr)
+        return;
+    const int offset = controller->getSettings().getTemperatureOffset();
+    if (offset == knownOffset)
+        return;
+    time_t t = time(nullptr);
+    struct tm local;
+    localtime_r(&t, &local);
+    if (local.tm_year + 1900 < 2025)
+        return; // clock not set yet: a record with the wrong time is worse than none
+    const String dir = String(DATA_DIR) + "/calibration";
+    if (!ensureDir(*fs, dir))
+        return;
+    char at[25];
+    strftime(at, sizeof(at), "%Y-%m-%dT%H:%M:%S", &local);
+    const String id = String((uint32_t)t);
+    File f = fs->open(dir + "/" + id + ".json", "w");
+    if (!f)
+        return;
+    JsonDocument doc;
+    doc["id"] = id;
+    doc["at"] = at;
+    doc["epoch"] = (uint32_t)t;
+    doc["offset"] = offset;
+    if (knownOffset != INT32_MIN)
+        doc["previous"] = knownOffset;
+    doc["afterShotId"] = lastShotId; // shots after this one were pulled on the new offset
+    serializeJson(doc, f);
+    f.close();
+    ESP_LOGI(TAG, "Temperature offset now %d (was %d)", offset, knownOffset);
+    knownOffset = offset;
+    saveState();
 }
 
 // Shots left in the bag of the coffee on the active profile, or -1 when unknown.

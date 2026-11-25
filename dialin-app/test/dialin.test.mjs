@@ -261,3 +261,20 @@ test("the roaster's espresso recipe drives the starting ratio, not a 1:3 cap", a
   assert.equal(rec.ratio, 3.05);
   assert.ok(rec.reasons.some(x => x.includes('Hola Coffee')));
 });
+
+test('calibration log: which offset a shot was pulled on, and where it changed', async () => {
+  const { offsetForShot, calibrationBetween } = await import('../dialin/www/lib/dialin.js');
+  const log = [
+    { id: '1', at: '2026-11-25T18:30:00', epoch: 1795617000, offset: 13, previous: 0, afterShotId: 10 },
+  ];
+  assert.equal(offsetForShot(log, { id: 11, timestamp: 1795617600 }, 13), 13); // after the change
+  assert.equal(offsetForShot(log, { id: 9, timestamp: 1795600000 }, 13), 0); // before it
+  assert.equal(offsetForShot([], { id: 9 }, 13), 13); // no log: assume today's value
+  // the divider falls between shot 11 and shot 9, not between 11 and 12
+  assert.equal(calibrationBetween(log, { id: 11 }, { id: 9 })?.offset, 13);
+  assert.equal(calibrationBetween(log, { id: 12 }, { id: 11 }), null);
+  // two changes: the newest one that applies wins
+  const two = [...log, { id: '2', at: '2026-11-26T09:00:00', epoch: 1795670000, offset: 11, previous: 13, afterShotId: 14 }];
+  assert.equal(offsetForShot(two, { id: 15 }, 11), 11);
+  assert.equal(offsetForShot(two, { id: 12 }, 11), 13);
+});

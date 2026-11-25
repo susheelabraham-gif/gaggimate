@@ -157,16 +157,20 @@ export function initFeedback({ gm, toast, getSettings, isBusy, onDone }) {
       }).catch(() => {});
 
       // 2. Next step.
+      // A change of calibration makes earlier good shots irrelevant: start the streak again.
+      const offsetChanged = bean.dial?.offset != null && s.tempOffset != null && bean.dial.offset !== s.tempOffset;
       const res = nextStep({
         shot: { seconds: f.seconds, yieldG: f.yieldG, targetYield: f.targetYield },
         feedback: { taste: form.taste, rating: form.rating },
-        dial: { ...(bean.dial || {}), grind: grindUsed ?? bean.dial?.grind ?? null },
+        dial: { ...(bean.dial || {}), grind: grindUsed ?? bean.dial?.grind ?? null, goodStreak: offsetChanged ? 0 : bean.dial?.goodStreak || 0 },
         grinder: s.grinder,
         temperature: current.profile?.temperature ?? 93,
         limits: s.limits || {},
         // Judge "fast" and "slow" against the roaster's time when they gave one.
         targetSeconds: bean.start?.targetSeconds ?? bean.recipe?.timeS ?? null,
       });
+
+      if (offsetChanged) res.reasons.unshift(`The machine's temperature offset changed since this coffee was dialed in, so the count of good shots starts again.`);
 
       // 3. Profile: new temperature if any, and the grind to use shown in its name on the machine.
       let applied = '';
@@ -186,9 +190,17 @@ export function initFeedback({ gm, toast, getSettings, isBusy, onDone }) {
       // 4. Coffee record.
       const log = [
         ...(bean.shots || []),
-        { id: current.shotId, at: new Date().toISOString(), grind: grindUsed, dose, taste: form.taste, rating: form.rating, seconds: Math.round(f.seconds), yieldG: f.yieldG },
+        { id: current.shotId, at: new Date().toISOString(), grind: grindUsed, dose, taste: form.taste, rating: form.rating, seconds: Math.round(f.seconds), yieldG: f.yieldG, tempOffset: s.tempOffset ?? null },
       ].slice(-100);
-      const updated = { ...bean, dial: res.dial, shots: log, mode: res.dialedIn ? 'dialed' : bean.mode, updatedAt: new Date().toISOString() };
+      // Remember the calibration these ratings were given under: if the machine's
+      // temperature offset changes later, this coffee's dial-in no longer applies.
+      const updated = {
+        ...bean,
+        dial: { ...res.dial, offset: s.tempOffset ?? bean.dial?.offset ?? null },
+        shots: log,
+        mode: res.dialedIn ? 'dialed' : bean.mode,
+        updatedAt: new Date().toISOString(),
+      };
       await gm.putRecord('beans', bean.id, updated);
 
       // 5. Clear the machine's "rate your shot" warning.

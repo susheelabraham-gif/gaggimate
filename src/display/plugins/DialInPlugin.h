@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.5.1"
+#define DIALIN_PLUGIN_VERSION "0.6.0"
 // GaggiMate 1.10 added ratio targets and a profile dose.
 #define DIALIN_HAS_RATIO_TARGET 1
 
@@ -69,6 +69,10 @@ class DialInPlugin : public Plugin {
     String dialingBeanFor(const String &profileId, const String &profileLabel);
     void refreshExpiry();
     int stockShotsLeft() const;
+    // The machine's temperature offset changes what a profile's temperature means at
+    // the puck, so every change is written to the calibration log with the time and the
+    // last shot, and the app can tell a change in the machine from a change in the coffee.
+    void checkTemperatureOffset();
     void loadState();
     void saveState();
     void serveIndex(AsyncWebServerRequest *request);
@@ -90,6 +94,9 @@ class DialInPlugin : public Plugin {
 
     static constexpr int LOW_STOCK_SHOTS = 4;
     String expiredBean;
+    int knownOffset = INT32_MIN; // the offset last written to the calibration log
+    int lastShotId = -1;         // most recent shot seen, stamped on a calibration record
+    unsigned long lastOffsetCheck = 0;
     String stockProfileId; // profile the cached stock belongs to
     float stockLeftG = -1;  // grams left when the app last counted (-1: unknown)
     float stockDose = 18;

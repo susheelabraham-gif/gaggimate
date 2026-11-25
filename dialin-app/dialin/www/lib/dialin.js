@@ -426,3 +426,40 @@ export function newShotsForBag(entries, { profileId, batch }) {
   }
   return { count, lastShotId };
 }
+
+// --- Machine calibration ----------------------------------------------------
+// The temperature offset decides what a profile's temperature means at the puck,
+// so a change to it changes the taste of every coffee. The plugin logs each change;
+// these helpers say which offset a shot was pulled on, and whether a coffee was
+// dialed in on a different one.
+
+export function sortCalibrations(records = []) {
+  return [...records].filter(r => r && typeof r.offset === 'number').sort((a, b) => (Number(a.epoch) || 0) - (Number(b.epoch) || 0));
+}
+
+// The offset in force when a shot was pulled (by shot id, else by time).
+export function offsetForShot(records, { id = null, timestamp = null } = {}, current = null) {
+  const log = sortCalibrations(records);
+  if (!log.length) return current;
+  let offset = log[0].previous ?? log[0].offset;
+  for (const r of log) {
+    const afterId = Number(r.afterShotId);
+    const started = Number.isFinite(Number(id)) && Number.isFinite(afterId) && afterId >= 0
+      ? Number(id) > afterId
+      : Number(timestamp) > (Number(r.epoch) || 0);
+    if (started) offset = r.offset;
+  }
+  return offset;
+}
+
+// Where a calibration change falls between two shots, newest-first, for the divider.
+export function calibrationBetween(records, newer, older) {
+  const log = sortCalibrations(records);
+  for (let i = log.length - 1; i >= 0; i--) {
+    const r = log[i];
+    const a = offsetForShot([r], newer, r.offset);
+    const b = offsetForShot([r], older, r.offset);
+    if (a !== b) return r;
+  }
+  return null;
+}

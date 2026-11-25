@@ -20,6 +20,8 @@ import {
   bagStock,
   newShotsForBag,
   roasterRecipe,
+  offsetForShot,
+  calibrationBetween,
 } from './lib/dialin.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -60,6 +62,23 @@ export function initBeans({ gm, root, toast, getSettings }) {
         await gm.putRecord('beans', bean.id, bean).catch(() => {});
       }
     }
+  }
+
+  // The machine's temperature offset changed since this coffee was dialed in: the
+  // recipe it settled on is now brewing at a different temperature.
+  function calibrationNotice(bean) {
+    const now = settings().tempOffset;
+    const then = bean.dial?.offset;
+    if (now == null || then == null || now === then) return '';
+    if (bean.mode !== 'dialed') return ''; // still dialing in: the loop handles it
+    if (bean.offsetNoticeFor === now) return ''; // the user chose to keep it as it is
+    const dir = now > then ? 'hotter' : 'cooler';
+    return `<div class="notice">
+      <div class="row gap"><strong class="warn-text">⚠ Machine calibration changed</strong></div>
+      <div class="small">Temperature offset went from ${fmtOffset(then)} to <strong>${fmtOffset(now)}</strong>. This coffee was dialed in before that, so it is now brewing ${dir} than when you rated it.</div>
+      <div class="row gap"><button class="small-btn primary" data-act="set-mode" data-mode="recalibrate" data-id="${esc(bean.id)}">Recalibrate</button>
+      <button class="small-btn" data-act="keep-calibration" data-id="${esc(bean.id)}">Keep as it is</button></div>
+    </div>`;
   }
 
   function stockLine(bean, batch) {
@@ -149,7 +168,12 @@ export function initBeans({ gm, root, toast, getSettings }) {
       <button class="primary" data-act="add">+ Add coffee</button></div>
       <ul class="list" id="bean-list"><li class="muted">Loading…</li></ul></div>`;
     try {
-      const [beans, batches] = await Promise.all([gm.getAll('beans'), gm.getAll('batches')]);
+      const [beans, batches, calibration] = await Promise.all([
+        gm.getAll('beans'),
+        gm.getAll('batches'),
+        gm.getAll('calibration').catch(() => []),
+      ]);
+      state.calibration = calibration;
       const list = root.querySelector('#bean-list');
       if (!beans.length) {
         list.innerHTML = '<li class="muted">No coffees yet. Add one to get a starting profile.</li>';
@@ -175,6 +199,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
+            ${calibrationNotice(b)}
             ${stockLine(b, latest)}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
             ${b.useBy ? `<div class="small ${expired ? 'warn-text' : 'muted'}">Use by ${esc(b.useBy)}${b.useByIgnored ? ' (you chose to keep using it)' : ''}</div>` : ''}
@@ -240,6 +265,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       ${b.confidence ? `<span class="pill ${b.confidence === 'high' ? 'ok' : b.confidence === 'low' ? 'warn' : ''}">${b.confidence} confidence</span>` : ''}</div>
       ${edit ? thumbBlock(b) : ''}
       ${edit ? bagBlock() : ''}
+      ${edit ? shotLog(b) : ''}
       ${state.relooked ? `<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.${state.lookupNote ? ` ${esc(state.lookupNote)}` : ''}</p>` : ''}
       ${state.relooked ? '' : `<p class="muted small">${edit ? 'Edit the details or look the coffee up again. Your profile, grind and rated shots are kept.' : "Correct anything that's wrong. Roast level matters most: it sets the salami plan."}</p>`}
       ${beanField('Coffee name', 'name', b.name, 'required')}
@@ -558,6 +584,30 @@ export function initBeans({ gm, root, toast, getSettings }) {
       <div class="small ${st.low ? 'warn-text' : 'muted'}">${esc(line)} Counted ${st.shots} shot${st.shots === 1 ? '' : 's'} from this bag.</div>
       <label class="field"><span>Weighed it? Coffee left now (g)</span><input type="number" inputmode="decimal" step="1" data-bag="leftNow" placeholder="leave empty to keep the estimate"/></label>
     </div>`;
+  }
+
+  // The coffee's own ratings, newest first, with a line where the machine's
+  // calibration changed: the same grind and recipe taste different either side of it.
+  function shotLog(bean) {
+    const shots = [...(bean.shots || [])].reverse().slice(0, 8);
+    if (!shots.length) return '';
+    const log = state.calibration || [];
+    const taste = { sour: 'warn-text', bitter: 'warn-text', balanced: 'ok-text' };
+    let out = '';
+    shots.forEach((shot, i) => {
+      const older = shots[i + 1];
+      const when = shot.at ? new Date(shot.at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : `Shot ${shot.id}`;
+      out += `<div class="shot-row"><div><strong class="small">${esc(when)}</strong>
+        <div class="small muted">grind ${esc(fmtGrind(shot.grind ?? 0, settings().grinder?.step))} · ${shot.seconds || '—'} s${shot.yieldG ? ` · ${shot.yieldG} g` : ''}</div></div>
+        <div class="right"><span class="small ${taste[shot.taste] || 'muted'}">${esc(shot.taste || '')}</span>
+        <div class="small muted">rated ${shot.rating ?? '—'}</div></div></div>`;
+      const change = older ? calibrationBetween(log, { id: shot.id, timestamp: Date.parse(shot.at) / 1000 }, { id: older.id, timestamp: Date.parse(older.at) / 1000 }) : null;
+      if (change) {
+        out += `<div class="calib-split"><span></span><span class="small">temperature offset ${fmtOffset(change.previous ?? '?')} → ${fmtOffset(change.offset)}</span><span></span></div>
+          <div class="small warn-text center">${esc((change.at || '').slice(0, 10))} · shots below were pulled on the old calibration</div>`;
+      }
+    });
+    return `<div class="card inner"><div class="row spread"><strong>Rated shots</strong><span class="muted small">newest first</span></div>${out}</div>`;
   }
 
   async function scanBag(btn) {
@@ -899,6 +949,11 @@ export function initBeans({ gm, root, toast, getSettings }) {
         state.photos.splice(i, 1);
         render();
         restoreForm(keep);
+      } else if (act === 'keep-calibration') {
+        const bean = await gm.getRecord('beans', btn.dataset.id);
+        await gm.putRecord('beans', bean.id, { ...bean, offsetNoticeFor: settings().tempOffset, updatedAt: new Date().toISOString() });
+        toast('Left as it is. Recalibrate any time from the coffee.', 'ok');
+        render();
       } else if (act === 'keep-bag') {
         const bean = await gm.getRecord('beans', btn.dataset.id);
         await gm.putRecord('beans', bean.id, { ...bean, useByIgnored: true, updatedAt: new Date().toISOString() });
@@ -1092,4 +1147,9 @@ function thumbBlock(b) {
     <div class="small muted">Shown here and on the machine's profile.</div>
     <div class="row gap small"><button class="small-btn" data-act="thumb-logo" ${b.logoUrl ? '' : 'disabled title="Look the coffee up again to find a logo"'}>Use logo</button>
     <button class="small-btn" data-act="thumb-name">Use name tile</button></div></div></div>`;
+}
+
+export function fmtOffset(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n} °C` : '?';
 }

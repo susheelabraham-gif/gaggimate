@@ -3,6 +3,7 @@ import { shotChart } from './lib/chart.js';
 import { aiSettings, DEFAULT_MODEL } from './lib/ai.js';
 import { initBeans, thumbSrc } from './beans.js';
 import { fetchProfileThumb } from './lib/thumb.js';
+import { offsetForShot } from './lib/dialin.js';
 import { initFeedback } from './feedback.js';
 
 const gm = new GaggiMate();
@@ -87,14 +88,16 @@ async function loadLastShot() {
       return;
     }
     const meta = shots[0];
-    const shot = await gm.loadShot(meta.id);
-    let notes = null;
-    try {
-      notes = await gm.getNotes(meta.id);
-    } catch {
-      /* notes are optional */
-    }
-    el.innerHTML = renderShot(meta, shot, notes);
+    const [shot, notes, calibration] = await Promise.all([
+      gm.loadShot(meta.id),
+      gm.getNotes(meta.id).catch(() => null),
+      gm.getAll('calibration').catch(() => []),
+    ]);
+    const previous = shots.length > 1 ? shots[1] : null;
+    el.innerHTML = renderShot(meta, shot, notes, {
+      offset: offsetForShot(calibration, { id: meta.id, timestamp: meta.timestamp }, pluginInfo?.tempOffset ?? null),
+      before: previous ? offsetForShot(calibration, { id: previous.id, timestamp: previous.timestamp }, pluginInfo?.tempOffset ?? null) : null,
+    });
   } catch (err) {
     el.innerHTML = `<h2>Last shot</h2><p class="error">${esc(err.message)}</p>`;
   }
@@ -104,7 +107,7 @@ function seconds(ms) {
   return ms ? (ms / 1000).toFixed(1) : '—';
 }
 
-function renderShot(meta, shot, notes) {
+function renderShot(meta, shot, notes, calib = {}) {
   const when = meta.timestamp ? new Date(meta.timestamp * 1000).toLocaleString() : '';
   const samples = shot.samples || [];
   const peak = samples.length ? Math.max(...samples.map(s => s.cp || 0)) : 0;
@@ -132,10 +135,25 @@ function renderShot(meta, shot, notes) {
         .map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`)
         .join('')
     : '';
+  // The machine's calibration is part of what made this shot taste as it did.
+  // Target temperature as the machine held it during the shot (tt in the samples).
+  const targets = samples.map(x => x.tt).filter(v => typeof v === 'number' && v > 0);
+  const setTemp = targets.length ? Math.round(targets[Math.floor(targets.length / 2)]) : null;
+  const offsetBlock =
+    calib.offset == null
+      ? ''
+      : `<div class="calib-row">
+          <div><span class="label">Brew temperature</span><strong>${setTemp ? `${setTemp} °C` : '—'}</strong>
+          <span class="muted small"> set · machine offset ${fmtOffset(calib.offset)}</span></div>
+          ${calib.before == null || calib.before === calib.offset
+            ? '<span class="pill">same as last shot</span>'
+            : `<span class="pill alarm">offset changed from ${fmtOffset(calib.before)}</span>`}
+        </div>`;
   return `
     <div class="shot-head"><h2>Last shot</h2><span class="muted">#${esc(meta.id)} · ${esc(when)}</span></div>
     <p class="profile-name">${esc(shot.profile || meta.profile || '')}</p>
     <div class="stats">${stats}</div>
+    ${offsetBlock}
     ${shotChart(shot)}
     ${noteRows ? `<dl class="facts notes">${noteRows}</dl>` : '<p class="muted">No tasting notes for this shot yet.</p>'}
     ${shot.incomplete ? '<p class="muted">This shot log is incomplete.</p>' : ''}`;
@@ -270,6 +288,10 @@ async function loadAppSettings() {
     /* limits default inside the logic */
   }
   if (currentTab === 'settings') renderAppSettings();
+  // The machine's status carries the temperature offset, and the coffees and the last
+  // shot are drawn before it arrives: draw them again now that it is known.
+  if (currentTab === 'beans') beans.refreshList();
+  loadLastShot();
 }
 
 function renderAppSettings() {
@@ -378,12 +400,12 @@ const beans = initBeans({
   gm,
   root: $('#tab-beans'),
   toast,
-  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits }),
+  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits, tempOffset: pluginInfo?.tempOffset ?? null }),
 });
 initFeedback({
   gm,
   toast,
-  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits }),
+  getSettings: () => ({ ...appSettings, limits: pluginInfo?.limits, tempOffset: pluginInfo?.tempOffset ?? null }),
   isBusy: () => beans.isBusy(),
   onDone: () => {
     if (currentTab === 'beans') beans.refreshList();
@@ -404,4 +426,9 @@ function relativeDay(epochSeconds) {
   if (days === 1) return 'yesterday';
   if (days < 7) return `${days} days ago`;
   return then.toLocaleDateString();
+}
+
+export function fmtOffset(v) {
+  const n = Number(v) || 0;
+  return `${n > 0 ? '+' : ''}${n} °C`;
 }
