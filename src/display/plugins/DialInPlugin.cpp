@@ -672,7 +672,10 @@ void DialInPlugin::handleProfileCheck(AsyncWebServerRequest *request, const std:
         prevSpec = toSpec(previous);
     dialin::ProfileSpec spec = toSpec(profile);
     spec.salami = in["salami"] | false;
-    auto errors = dialin::validate(spec, limits, hasPrevious ? &prevSpec : nullptr);
+    // "rebuild": the user asked to reset this profile to the roaster's recipe, so the
+    // step-by-step change limits don't apply. Every hard safety limit still does.
+    const bool rebuild = in["rebuild"] | false;
+    auto errors = dialin::validate(spec, limits, hasPrevious && !rebuild ? &prevSpec : nullptr);
 
     JsonDocument out;
     out["ok"] = errors.empty();

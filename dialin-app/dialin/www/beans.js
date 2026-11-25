@@ -230,6 +230,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const buttons = edit
       ? `<div class="row gap"><button class="primary" data-act="save-edit">Save changes</button>
         <button data-act="relookup" ${aiSettings.apiKey ? '' : 'disabled title="Add your API key in Settings"'}>Look up again</button>
+        ${b.profileId ? '<button data-act="rebuild">Rebuild profile from recipe</button>' : ''}
         <button class="link" data-act="list">Cancel</button></div>
         <hr/><button class="danger" data-act="delete-bean">Delete this coffee</button>`
       : `<div class="row gap"><button class="primary" data-act="save-bean">Save coffee</button><button class="link" data-act="list">Cancel</button></div>`;
@@ -432,7 +433,9 @@ export function initBeans({ gm, root, toast, getSettings }) {
       rec.grindAdvice === 'keep'
         ? `Keep the grind${grind != null ? ` at ${grind}` : ''}.`
         : `Grind a little ${rec.grindAdvice}${grind != null ? ` than ${grind}` : ''}.`;
-    root.innerHTML = `<div class="card"><h2>Starting recipe for ${esc(bean.name)}</h2>
+    const rebuilding = !!state.rebuild && !!bean.profileId;
+    root.innerHTML = `<div class="card"><h2>${rebuilding ? `Rebuild ${esc(bean.name)}'s profile` : `Starting recipe for ${esc(bean.name)}`}</h2>
+      ${rebuilding ? `<p class="small muted">Replaces the profile on the machine with this recipe${roasterRecipe(bean) ? '' : ' (no roaster recipe found, so this is the standard start for this roast level)'}. Your grind, ratings and shot history are kept.</p>` : ''}
       <div class="stats">
         <div class="stat"><span class="label">Dose</span><strong>${plan.dose} g</strong></div>
         <div class="stat"><span class="label">Yield</span><strong>${rec.yieldG} g</strong></div>
@@ -443,13 +446,13 @@ export function initBeans({ gm, root, toast, getSettings }) {
       <ul class="small">${rec.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
       ${recipeSwitch(bean, rec, plan)}
       <div id="rec-errors"></div>
-      <div class="row gap"><button class="primary" data-act="save-profile">Save profile and make it active</button><button class="link" data-act="list">Not now</button></div></div>`;
+      <div class="row gap"><button class="primary" data-act="save-profile">${rebuilding ? 'Replace the profile on the machine' : 'Save profile and make it active'}</button><button class="link" data-act="list">Not now</button></div></div>`;
   }
 
   function renderDone() {
     const { bean, rec, plan } = state;
     root.innerHTML = `<div class="card"><h2>Ready for your first shot</h2>
-      <p>The profile <strong>${esc(bean.name)}</strong> is active on the machine: ${plan.dose} g in, ${rec.yieldG} g out at ${rec.temperature} °C.</p>
+      <p>The profile <strong>${esc(bean.name)}</strong> is active on the machine: ${plan.dose} g in, ${rec.yieldG} g out at ${rec.temperature} °C${rec.targetSeconds ? `, aiming for about ${rec.targetSeconds} s` : ''}.</p>
       ${state.bean.dial?.grind != null ? `<p>Grind at <strong>${esc(fmtGrind(state.bean.dial.grind, settings().grinder?.step))}</strong>. The profile's name on the machine shows the grind to use.</p>` : ''}
       <p class="muted">The coffee is now in <em>Dialing in</em> mode: after each shot you'll be asked to rate it here, and the machine asks before the next shot until you do.</p>
       <button class="primary" data-act="list">Done</button></div>`;
@@ -770,14 +773,14 @@ export function initBeans({ gm, root, toast, getSettings }) {
       shotSeconds: fb.seconds,
       limits: settings().limits || {},
     });
-    show('recommendation');
+    show('recommendation', { rebuild: false });
   }
 
   // Starting recipe without a salami shot: the roaster's own espresso recipe when
   // the research found one, otherwise the usual start for that roast level.
   function standardStart(force = null) {
     state.rec = recipeStart(state.bean, force);
-    show('recommendation');
+    show('recommendation', { rebuild: false });
   }
 
   function recipeStart(bean, force = null) {
@@ -824,7 +827,9 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const done = busy(btn, 'Saving…');
     const box = root.querySelector('#rec-errors');
     try {
+      const rebuilding = !!state.rebuild && !!state.bean.profileId;
       const profile = startingProfile(state.bean, state.rec, state.plan.dose);
+      if (rebuilding) profile.id = state.bean.profileId;
       const g = settings().grinder;
       let grind = startingGrind(state.bean, g);
       const gstep = g?.step || 0.25;
@@ -833,7 +838,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
         grind += (state.rec.grindAdvice === 'finer' ? finer : -finer) * gstep;
       }
       if (grind != null) profile.label = `${state.bean.name} · grind ${fmtGrind(grind, gstep)}`.slice(0, 40);
-      const res = await gm.saveProfile(profile, true);
+      const res = await gm.saveProfile(profile, true, { rebuild: rebuilding });
       if (!res.ok) {
         box.innerHTML = `<ul class="errors">${(res.errors || []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`;
         throw new Error('The machine refused this profile.');
@@ -841,11 +846,14 @@ export function initBeans({ gm, root, toast, getSettings }) {
       const bean = {
         ...state.bean,
         profileId: res.id,
-        mode: 'dialing',
+        mode: 'dialing', // a new recipe is worth rating again, even when it was dialed in
         recipe: state.bean.recipe,
         start: { dose: state.plan.dose, targetSeconds: state.rec.targetSeconds ?? roasterRecipe(state.bean)?.timeS ?? null, ...state.rec },
         salami: state.feedback ? { plan: state.plan, cups: state.feedback.cups, blendBest: state.feedback.blendBest, shotId: state.feedback.shotId } : null,
-        dial: { grind, step: 2 * gstep, lastDir: 0, goodStreak: 0 },
+        // A rebuild keeps the grind you had arrived at; a brand-new profile starts fresh.
+        dial: rebuilding
+          ? { ...(state.bean.dial || {}), grind: state.bean.dial?.grind ?? grind, step: 2 * gstep, lastDir: 0, goodStreak: 0 }
+          : { grind, step: 2 * gstep, lastDir: 0, goodStreak: 0 },
         updatedAt: new Date().toISOString(),
       };
       await gm.putRecord('beans', bean.id, bean);
@@ -856,7 +864,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
         gm.request('req:profiles:delete', { id: state.run.profileId }).catch(() => {});
       }
       done();
-      show('done');
+      show('done', { rebuild: false });
     } catch (err) {
       done();
       toast(err.message, 'error');
@@ -940,7 +948,13 @@ export function initBeans({ gm, root, toast, getSettings }) {
         render();
       } else if (act === 'salami-setup') show('salami-setup', { plan: null });
       else if (act === 'skip-salami') standardStart();
-      else if (act === 'use-roaster') standardStart('roaster');
+      else if (act === 'rebuild') {
+        const fresh = (await gm.getRecord('beans', state.bean.id)) || state.bean;
+        state.bean = { ...emptyBean(), ...fresh };
+        standardStart(roasterRecipe(state.bean) ? 'roaster' : null);
+        state.rebuild = true;
+        render();
+      } else if (act === 'use-roaster') standardStart('roaster');
       else if (act === 'use-mine') standardStart('mine');
       else if (act === 'load-salami') await loadSalami(btn);
       else if (act === 'toggle') {

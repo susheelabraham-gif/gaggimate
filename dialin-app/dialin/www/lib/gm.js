@@ -141,8 +141,8 @@ export class GaggiMate extends EventTarget {
   checkProfile(profile, { salami = false } = {}) {
     return this.api('POST', '/profile/check', { profile, salami });
   }
-  saveProfile(profile, select = false, { salami = false } = {}) {
-    return this.api('POST', '/profile/save', { profile, select, salami });
+  saveProfile(profile, select = false, { salami = false, rebuild = false } = {}) {
+    return this.api('POST', '/profile/save', { profile, select, salami, rebuild });
   }
 
   // ---- records on the SD card (/dialin/data/<collection>/<id>.json)
