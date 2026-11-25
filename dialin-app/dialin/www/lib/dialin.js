@@ -327,3 +327,52 @@ export function localToday(now = new Date()) {
 export function isExpired(bean, today = localToday()) {
   return !!bean?.useBy && !bean.useByIgnored && bean.useBy < today;
 }
+
+// --- Bag stock -------------------------------------------------------------
+// How much coffee is left in the bag: bag size minus (shots pulled x dose),
+// or counted down from the last amount the user weighed/entered.
+export function bagStock({ batch, dose = 18, shots = 0, lowShots = 4 }) {
+  const size = Number(batch?.bagSizeG) || 0;
+  const d = Number(dose) > 0 ? Number(dose) : 18;
+  const cal = batch?.calib;
+  let leftG;
+  if (cal && Number.isFinite(Number(cal.leftG))) {
+    leftG = Number(cal.leftG) - Math.max(0, shots - (Number(cal.atShots) || 0)) * d;
+  } else if (size > 0) {
+    leftG = size - shots * d;
+  } else {
+    return null; // no bag size and never weighed: nothing to estimate from
+  }
+  leftG = Math.max(0, Math.round(leftG));
+  const shotsLeft = Math.floor(leftG / d);
+  return {
+    bagSizeG: size,
+    dose: d,
+    shots,
+    leftG,
+    shotsLeft,
+    usedG: size > 0 ? Math.max(0, size - leftG) : null,
+    percent: size > 0 ? Math.max(0, Math.min(100, Math.round((leftG / size) * 100))) : null,
+    low: shotsLeft < lowShots,
+    empty: shotsLeft < 1,
+  };
+}
+
+// Shots on this coffee's profile that this bag hasn't counted yet (newest-first index).
+export function newShotsForBag(entries, { profileId, batch }) {
+  if (!profileId || !batch) return { count: 0, lastShotId: Number(batch?.lastShotId) || 0 };
+  const seen = Number(batch.lastShotId) || 0;
+  const startedAt = Date.parse(batch.createdAt || '') / 1000 || 0;
+  let count = 0;
+  let lastShotId = seen;
+  for (const e of entries || []) {
+    const id = Number(e.id);
+    if (!Number.isFinite(id) || e.deleted || e.profileId !== profileId) continue;
+    if (id <= seen) continue;
+    // Before this bag's first count, ignore shots pulled before the bag was opened.
+    if (!seen && e.timestamp > 0 && startedAt && e.timestamp < startedAt) continue;
+    count++;
+    if (id > lastShotId) lastShotId = id;
+  }
+  return { count, lastShotId };
+}

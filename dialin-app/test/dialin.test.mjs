@@ -199,3 +199,39 @@ test('use-by: printed date wins, else roast date + days, else none', async () =>
   assert.equal(isExpired({ useBy: '2026-11-01', useByIgnored: true }, '2026-11-25'), false);
   assert.equal(isExpired({ useBy: '' }, '2026-11-25'), false);
 });
+
+test('bag stock: estimate from bag size, dose and shots; low under 4 shots', async () => {
+  const { bagStock } = await import('../dialin/www/lib/dialin.js');
+  const a = bagStock({ batch: { bagSizeG: 250 }, dose: 18, shots: 5 });
+  assert.equal(a.leftG, 160);
+  assert.equal(a.shotsLeft, 8);
+  assert.equal(a.low, false);
+  assert.equal(a.percent, 64);
+  const b = bagStock({ batch: { bagSizeG: 250 }, dose: 18, shots: 11 });
+  assert.equal(b.shotsLeft, 2);
+  assert.equal(b.low, true);
+  assert.equal(bagStock({ batch: { bagSizeG: 250 }, dose: 18, shots: 20 }).empty, true);
+  assert.equal(bagStock({ batch: {}, dose: 18, shots: 1 }), null);
+  // after weighing: count down from the weighed amount
+  const c = bagStock({ batch: { bagSizeG: 250, calib: { leftG: 120, atShots: 6 } }, dose: 18, shots: 8 });
+  assert.equal(c.leftG, 84);
+});
+
+test('bag shot counting is incremental and ignores other profiles', async () => {
+  const { newShotsForBag } = await import('../dialin/www/lib/dialin.js');
+  const batch = { createdAt: '2026-11-01T00:00:00.000Z', countedShots: 3, lastShotId: 40 };
+  const entries = [
+    { id: '42', profileId: 'P1', timestamp: 1764300000 },
+    { id: '41', profileId: 'P1', timestamp: 1764200000 },
+    { id: '39', profileId: 'P1', timestamp: 1764100000 }, // already counted
+    { id: '43', profileId: 'OTHER', timestamp: 1764300000 },
+  ];
+  const r = newShotsForBag(entries, { profileId: 'P1', batch });
+  assert.equal(r.count, 2);
+  assert.equal(r.lastShotId, 42);
+  // first count on a fresh bag ignores shots pulled before it was opened
+  const fresh = { createdAt: '2026-11-20T00:00:00.000Z' };
+  const r2 = newShotsForBag([{ id: '10', profileId: 'P1', timestamp: 1763000000 }, { id: '11', profileId: 'P1', timestamp: 1795900000 }], { profileId: 'P1', batch: fresh });
+  assert.equal(r2.count, 1);
+  assert.equal(r2.lastShotId, 11);
+});

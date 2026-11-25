@@ -16,6 +16,8 @@ import {
   useByFor,
   isExpired,
   localToday,
+  bagStock,
+  newShotsForBag,
 } from './lib/dialin.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -28,6 +30,36 @@ export function initBeans({ gm, root, toast, getSettings }) {
   // ------------------------------------------------------------ helpers
   const settings = () => getSettings();
   const useBy = batch => useByFor(batch, settings().freshDays ?? 60);
+  const doseFor = bean => Number(bean?.start?.dose) || Number(settings().dose) || 18;
+  const stockFor = (bean, batch) => bagStock({ batch, dose: doseFor(bean), shots: Number(batch?.countedShots) || 0 });
+
+  // Count shots pulled on each coffee's profile (rated or not) and remember the
+  // running total on its current bag, so the estimate survives the 50-shot window.
+  async function countShots(beans, batches) {
+    const withProfile = beans.filter(b => b.profileId && latestBatch(batches, b.id));
+    if (!withProfile.length) return;
+    const entries = await gm.recentShots(50).catch(() => null);
+    if (!entries) return;
+    for (const bean of withProfile) {
+      const batch = latestBatch(batches, bean.id);
+      const { count, lastShotId } = newShotsForBag(entries, { profileId: bean.profileId, batch });
+      if (!count && batch.lastShotId === lastShotId) continue;
+      batch.countedShots = (Number(batch.countedShots) || 0) + count;
+      batch.lastShotId = lastShotId;
+      await gm.putRecord('batches', batch.id, batch).catch(() => {});
+    }
+  }
+
+  function stockLine(bean, batch) {
+    const st = stockFor(bean, batch);
+    if (!st) return '';
+    const label = st.empty
+      ? 'Bag looks empty'
+      : `≈ ${st.leftG} g left · about ${st.shotsLeft} shot${st.shotsLeft === 1 ? '' : 's'}`;
+    const bar = st.percent == null ? '' : `<span class="bar"><span style="width:${st.percent}%"></span></span>`;
+    return `<div class="small stock ${st.low ? 'warn-text' : 'muted'}">${bar}${st.low ? '⚠ ' : ''}${esc(label)}${st.low && !st.empty ? ' — running low' : ''}</div>`;
+  }
+
   const latestBatch = (batches, beanId) =>
     batches.filter(x => x.beanId === beanId).sort((x, y) => (y.createdAt || '').localeCompare(x.createdAt || ''))[0];
 
@@ -120,6 +152,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
           gm.putRecord('beans', b.id, b).catch(() => {});
         }
       }
+      await countShots(beans, batches);
       const today = localToday();
       list.innerHTML = beans
         .map(b => {
@@ -130,6 +163,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
+            ${stockLine(b, latest)}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
             ${b.useBy ? `<div class="small ${expired ? 'warn-text' : 'muted'}">Use by ${esc(b.useBy)}${b.useByIgnored ? ' (you chose to keep using it)' : ''}</div>` : ''}
             ${expired ? `<div class="row gap"><button class="link" data-act="details" data-bag="1" data-id="${esc(b.id)}">New bag? Scan it ›</button><button class="link" data-act="keep-bag" data-id="${esc(b.id)}">Keep using this bag ›</button></div>` : ''}
@@ -473,7 +507,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
 
   function readBagFields() {
     const v = k => root.querySelector(`[data-bag="${k}"]`)?.value || '';
-    return { roastDate: v('roastDate'), bestBefore: v('bestBefore'), openedDate: v('openedDate') };
+    return { roastDate: v('roastDate'), bestBefore: v('bestBefore'), openedDate: v('openedDate'), bagSizeG: Number(v('bagSizeG')) || 0, leftNow: v('leftNow') };
   }
 
   function bagBlock() {
@@ -484,12 +518,27 @@ export function initBeans({ gm, root, toast, getSettings }) {
       ${expired ? '<p class="small">Bought a new bag? Add photos of it (both sides) and tap <em>Read dates</em>, then <em>Save as new bag</em>.</p>' : ''}
       <div class="grid2"><label class="field"><span>Roast date</span><input type="date" data-bag="roastDate" value="${esc(bt.roastDate || '')}"/></label>
       <label class="field"><span>Use by / best before</span><input type="date" data-bag="bestBefore" value="${esc(bt.bestBefore || '')}"/></label></div>
-      <label class="field"><span>Opened on</span><input type="date" data-bag="openedDate" value="${esc(bt.openedDate || '')}"/></label>
+      <div class="grid2"><label class="field"><span>Opened on</span><input type="date" data-bag="openedDate" value="${esc(bt.openedDate || '')}"/></label>
+      <label class="field"><span>Bag size (g)</span><input type="number" inputmode="numeric" step="1" data-bag="bagSizeG" value="${esc(bt.bagSizeG ?? 250)}"/></label></div>
+      ${stockBlock()}
       <p class="small muted">${ub ? `Use by ${esc(ub)}${bt.bestBefore ? ' (printed on the bag)' : ` (${settings().freshDays ?? 60} days after roasting)`}.` : 'No use-by date: add the roast or use-by date to get a warning when it gets old.'}</p>
       ${state.bagNote ? `<p class="small warn-text">${esc(state.bagNote)}</p>` : ''}
       ${photoPicker('Photos of the bag')}
       <div class="row gap"><button class="small-btn" data-act="bag-scan" ${aiSettings.apiKey ? '' : 'disabled title="Add your API key in Settings"'}>Read dates from photos</button>
       <button class="small-btn" data-act="bag-new">Save as new bag</button></div></div>`;
+  }
+
+  // Stock estimate plus a way to correct it by weighing what's left.
+  function stockBlock() {
+    const st = stockFor(state.bean, state.batch);
+    if (!st) return '';
+    const line = st.empty ? 'Bag looks empty.' : `≈ ${st.leftG} g left, about ${st.shotsLeft} shot${st.shotsLeft === 1 ? '' : 's'} at ${st.dose} g.`;
+    return `<div class="stock-box${st.low ? ' low' : ''}">
+      <div class="small"><strong>Coffee left</strong> ${st.low ? '<span class="pill alarm">Running low</span>' : ''}</div>
+      ${st.percent == null ? '' : `<span class="bar"><span style="width:${st.percent}%"></span></span>`}
+      <div class="small ${st.low ? 'warn-text' : 'muted'}">${esc(line)} Counted ${st.shots} shot${st.shots === 1 ? '' : 's'} from this bag.</div>
+      <label class="field"><span>Weighed it? Coffee left now (g)</span><input type="number" inputmode="decimal" step="1" data-bag="leftNow" placeholder="leave empty to keep the estimate"/></label>
+    </div>`;
   }
 
   async function scanBag(btn) {
@@ -527,11 +576,17 @@ export function initBeans({ gm, root, toast, getSettings }) {
   async function saveBagEdits(bean) {
     const f = readBagFields();
     const bt = state.batch;
-    const changed = bt ? ['roastDate', 'bestBefore', 'openedDate'].some(k => (bt[k] || '') !== f[k]) : f.roastDate || f.bestBefore;
+    const { leftNow, ...fields } = f;
+    const weighed = leftNow !== '' && Number.isFinite(Number(leftNow));
+    const changed = bt
+      ? weighed || ['roastDate', 'bestBefore', 'openedDate'].some(k => (bt[k] || '') !== fields[k]) || (Number(bt.bagSizeG) || 0) !== fields.bagSizeG
+      : fields.roastDate || fields.bestBefore || weighed;
     if (!changed) return bean;
-    const batch = bt
-      ? { ...bt, ...f }
-      : { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, bagSizeG: 250, createdAt: new Date().toISOString(), ...f, openedDate: f.openedDate || today() };
+    const base = bt
+      ? { ...bt, ...fields }
+      : { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, createdAt: new Date().toISOString(), ...fields, openedDate: fields.openedDate || today() };
+    const batch = { ...base, bagSizeG: fields.bagSizeG || base.bagSizeG || 250 };
+    if (weighed) batch.calib = { leftG: Number(leftNow), atShots: Number(batch.countedShots) || 0 };
     await gm.putRecord('batches', batch.id, batch);
     state.batch = batch;
     const reset = bt && (bt.bestBefore || '') !== f.bestBefore;
@@ -545,7 +600,9 @@ export function initBeans({ gm, root, toast, getSettings }) {
     try {
       const bean = await gm.getRecord('beans', state.bean.id);
       const now = new Date().toISOString();
-      const batch = { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, roastDate: f.roastDate, bestBefore: f.bestBefore, openedDate: f.openedDate && f.openedDate !== state.batch?.openedDate ? f.openedDate : today(), bagSizeG: state.batch?.bagSizeG || 250, createdAt: now };
+      const entries = await gm.recentShots(50).catch(() => null);
+      const lastShotId = entries ? entries.reduce((m, e) => Math.max(m, Number(e.id) || 0), 0) : 0;
+      const batch = { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, roastDate: f.roastDate, bestBefore: f.bestBefore, openedDate: f.openedDate && f.openedDate !== state.batch?.openedDate ? f.openedDate : today(), bagSizeG: f.bagSizeG || state.batch?.bagSizeG || 250, createdAt: now, countedShots: 0, lastShotId };
       await gm.putRecord('batches', batch.id, batch);
       const updated = { ...bean, useBy: useBy(batch), useByIgnored: false, mode: bean.profileId && bean.mode === 'dialed' ? 'dialing' : bean.mode, updatedAt: now };
       if (updated.dial) updated.dial = { ...updated.dial, goodStreak: 0 };
