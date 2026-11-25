@@ -71,6 +71,14 @@ Reply with ONE JSON object and nothing else, in this shape:
   "bestBefore": "YYYY-MM-DD"|null,      // use-by / best-before / expiry date printed on the bag; month-only dates mean the month's last day
   "bagSizeG": number|null,
   "recipe": {"dose": number|null, "yield": number|null, "ratio": number|null, "timeS": number|null, "tempC": number|null, "source": string|null} | null,
+                                        // ESPRESSO recipe only. Roasters often print several
+                                        // recipes (espresso, filter/V60, batch brew, cold brew);
+                                        // take the espresso one, whatever it is called
+                                        // (espresso, ristretto, "para espresso"). Never a filter
+                                        // recipe: those pour far more water through (1:14 and up,
+                                        // yields in the hundreds of grams). If the page has no
+                                        // espresso recipe, use null here and put the filter one in
+                                        // "brewNote".
   "community": [{"summary": string, "source": string}],   // at most 4, about espresso
   "roastedFor": "espresso"|"filter"|"omni"|null,          // what the roaster says the roast is for
   "brewMethods": {                      // per method: how well this coffee suits it, from the roaster first, then other sources
@@ -108,6 +116,17 @@ export function extractJson(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+// Does this look like an espresso recipe rather than a filter one?
+export function isEspressoRecipe(r) {
+  if (!r) return false;
+  const ratio = r.ratio || (r.dose && r.yield ? r.yield / r.dose : null);
+  if (ratio && ratio > 4) return false;
+  if (r.yield && r.yield > 150) return false;
+  if (r.timeS && r.timeS > 120) return false; // minutes-long brew = not espresso
+  if (r.dose && (r.dose < 5 || r.dose > 30)) return false;
+  return !!(ratio || r.dose || r.yield || r.tempC);
+}
+
 export function normalizeBean(raw) {
   const b = raw || {};
   const level = ROAST_LEVELS.includes(b.roastLevel) ? b.roastLevel : 'medium';
@@ -122,6 +141,9 @@ export function normalizeBean(raw) {
         source: b.recipe.source || null,
       }
     : null;
+  // Guard against a filter recipe arriving in the espresso field: espresso is
+  // roughly 1:1 to 1:4 and tens of grams, filter is 1:14 and up, hundreds of grams.
+  const espressoRecipe = isEspressoRecipe(recipe) ? recipe : null;
   return {
     roaster: b.roaster || '',
     name: b.name || '',
@@ -135,7 +157,7 @@ export function normalizeBean(raw) {
     roastDate: /^\d{4}-\d{2}-\d{2}$/.test(b.roastDate || '') ? b.roastDate : '',
     bestBefore: /^\d{4}-\d{2}-\d{2}$/.test(b.bestBefore || '') ? b.bestBefore : '',
     bagSizeG: num(b.bagSizeG),
-    recipe,
+    recipe: espressoRecipe,
     community: Array.isArray(b.community) ? b.community.slice(0, 4) : [],
     roastedFor: ['espresso', 'filter', 'omni'].includes(b.roastedFor) ? b.roastedFor : '',
     brewMethods: Object.fromEntries(

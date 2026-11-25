@@ -77,7 +77,7 @@ test('normalizeBean guards unknown values and fake dates', () => {
   assert.equal(b.roastLevel, 'medium');
   assert.equal(b.roastLevelGuessed, true);
   assert.equal(b.roastDate, '');
-  assert.equal(b.recipe.ratio, null);
+  assert.equal(b.recipe, null); // a recipe with nothing usable in it is no recipe
   assert.throws(() => extractJson('no json here'));
 });
 
@@ -160,4 +160,17 @@ test('research takes several photos of one bag', async () => {
   assert.equal(body.messages[0].content.filter(c => c.type === 'image').length, 3);
   assert.match(body.messages[0].content.at(-1).text, /3 photos/);
   assert.equal(b.bestBefore, '2027-05-31');
+});
+
+test('a filter recipe never lands in the espresso recipe field', async () => {
+  const { isEspressoRecipe } = await import('../dialin/www/lib/ai.js');
+  // Hola Coffee La Montaña: espresso 18 g -> 48 g in 27 s; filter 15 g -> 250 g
+  assert.equal(isEspressoRecipe({ dose: 18, yield: 48, timeS: 27 }), true);
+  assert.equal(isEspressoRecipe({ dose: 15, yield: 250, timeS: 180 }), false);
+  assert.equal(isEspressoRecipe({ ratio: 16 }), false);
+  assert.equal(isEspressoRecipe({ dose: 60, yield: 1000 }), false);
+  assert.equal(isEspressoRecipe(null), false);
+  // and normalizeBean drops it rather than passing it on as an espresso recipe
+  assert.equal(normalizeBean({ name: 'X', recipe: { dose: 15, yield: 250, timeS: 180, source: 'filter guide' } }).recipe, null);
+  assert.equal(normalizeBean({ name: 'X', recipe: { dose: 18, yield: 48, timeS: 27 } }).recipe.yield, 48);
 });

@@ -23,8 +23,13 @@ let currentTab = 'shot';
 for (const btn of document.querySelectorAll('[data-tab]')) {
   btn.addEventListener('click', () => showTab(btn.dataset.tab));
 }
-function showTab(name) {
+const tabFromHash = () => (location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot';
+// Back, forward, and any link to #beans or #settings switch tabs.
+window.addEventListener('hashchange', () => showTab(tabFromHash(), false));
+
+function showTab(name, setHash = true) {
   if (!document.getElementById(`tab-${name}`)) name = 'shot';
+  if (setHash && tabFromHash() !== name) location.hash = `#${name}`;
   currentTab = name;
   for (const btn of document.querySelectorAll('[data-tab]')) btn.setAttribute('aria-selected', btn.dataset.tab === name);
   for (const sec of document.querySelectorAll('.tab')) sec.hidden = sec.id !== `tab-${name}`;
@@ -279,7 +284,10 @@ function renderAppSettings() {
       <span class="muted small">Days after roasting, used when the bag has no use-by date printed. 0 = only warn on printed dates.</span></label>
     <button type="submit" class="primary">Save</button>`;
   $('#aisettings').innerHTML = `
-    <label><span>Anthropic API key</span><span class="input"><input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(aiSettings.apiKey || '')}" style="width:170px;text-align:left"/></span></label>
+    <label><span>Anthropic API key</span><span class="input"><input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(aiSettings.apiKey || '')}" style="width:170px;text-align:left"/></span>
+      <span class="muted small">Kept in this browser only. A phone, a second browser or the app added to your home screen each need their own.</span></label>
+    <label class="check"><input type="checkbox" name="shareKey" ${sharedKey ? 'checked' : ''}/> <span>Share this key with my other devices</span></label>
+    <p class="muted small">Stores the key on the machine's SD card so every device on your home network gets it. Anyone who can reach the machine could read it, so leave this off if that's not what you want.</p>
     <label><span>Model</span><span class="input"><input name="model" value="${esc(aiSettings.model)}" style="width:170px;text-align:left"/></span>
       <span class="muted small">Default ${DEFAULT_MODEL}.</span></label>
     <button type="submit" class="primary">Save</button>`;
@@ -313,12 +321,37 @@ $('#appsettings').addEventListener('submit', async e => {
   }
 });
 
-$('#aisettings').addEventListener('submit', e => {
+let sharedKey = '';
+async function loadSharedKey() {
+  const rec = await gm.getRecord('settings', 'ai').catch(() => null);
+  sharedKey = rec?.apiKey || '';
+  if (sharedKey && !aiSettings.apiKey) aiSettings.apiKey = sharedKey; // new device: pick it up
+  if (currentTab === 'settings') renderAppSettings();
+}
+
+$('#aisettings').addEventListener('submit', async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target).entries());
-  aiSettings.apiKey = f.apiKey.trim();
+  const key = f.apiKey.trim();
+  aiSettings.apiKey = key;
   aiSettings.model = f.model.trim();
-  toast('Saved in this browser.', 'ok');
+  let where = 'in this browser';
+  try {
+    if (f.shareKey && key) {
+      await gm.putRecord('settings', 'ai', { apiKey: key });
+      sharedKey = key;
+      where = 'in this browser and on the machine for your other devices';
+    } else if (sharedKey) {
+      await gm.putRecord('settings', 'ai', {});
+      sharedKey = '';
+      where = 'in this browser only; the shared copy on the machine was removed';
+    }
+  } catch (err) {
+    toast(`Saved in this browser, but sharing failed: ${err.message}`, 'error');
+    return renderAppSettings();
+  }
+  toast(`Saved ${where}.`, 'ok');
+  renderAppSettings();
 });
 
 $('#limits').addEventListener('submit', async e => {
@@ -354,8 +387,9 @@ initFeedback({
   },
 });
 window.__dialinStarted = true;
+loadSharedKey();
 gm.connect();
-showTab((location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot');
+showTab(tabFromHash(), false);
 
 // "today" / "yesterday" / "6 days ago" / a date, from a shot timestamp in seconds.
 function relativeDay(epochSeconds) {

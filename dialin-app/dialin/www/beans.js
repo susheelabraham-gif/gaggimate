@@ -227,8 +227,10 @@ export function initBeans({ gm, root, toast, getSettings }) {
       : `<div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Use by / best before', 'bestBefore', b.bestBefore, 'type="date"')}</div>
       ${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}
       ${beanField('Bag size (g)', 'bagSizeG', b.bagSizeG ?? 250, 'type="number" inputmode="numeric"')}`;
+    const noKey = !aiSettings.apiKey;
     const buttons = edit
-      ? `<div class="row gap"><button class="primary" data-act="save-edit">Save changes</button>
+      ? `${noKey ? '<p class="error small">Add your Anthropic API key in Settings on this device to look coffees up or read bag photos. Keys are kept per browser, so a phone added to the home screen needs its own (or switch on sharing in Settings).</p>' : ''}
+        <div class="row gap"><button class="primary" data-act="save-edit">Save changes</button>
         <button data-act="relookup" ${aiSettings.apiKey ? '' : 'disabled title="Add your API key in Settings"'}>Look up again</button>
         ${b.profileId ? '<button data-act="rebuild">Rebuild profile from recipe</button>' : ''}
         <button class="link" data-act="list">Cancel</button></div>
