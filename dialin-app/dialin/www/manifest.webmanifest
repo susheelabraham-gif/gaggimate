@@ -1,0 +1,16 @@
+{
+  "name": "GaggiMate Dial-in",
+  "short_name": "Dial-in",
+  "description": "Dial in espresso on your GaggiMate: coffees, profiles, shot feedback.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f6fb",
+  "theme_color": "#6f4e37",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ]
+}

@@ -43,10 +43,20 @@ export function initBeans({ gm, root, toast, getSettings }) {
     for (const bean of withProfile) {
       const batch = latestBatch(batches, bean.id);
       const { count, lastShotId } = newShotsForBag(entries, { profileId: bean.profileId, batch });
-      if (!count && batch.lastShotId === lastShotId) continue;
-      batch.countedShots = (Number(batch.countedShots) || 0) + count;
-      batch.lastShotId = lastShotId;
-      await gm.putRecord('batches', batch.id, batch).catch(() => {});
+      if (count || batch.lastShotId !== lastShotId) {
+        batch.countedShots = (Number(batch.countedShots) || 0) + count;
+        batch.lastShotId = lastShotId;
+        await gm.putRecord('batches', batch.id, batch).catch(() => {});
+      }
+      // Leave the figure on the coffee too: the machine reads it to warn when the
+      // bag is nearly finished, counting down the shots pulled since this shot id.
+      const st = stockFor(bean, batch);
+      const stock = st ? { leftG: st.leftG, dose: st.dose, shotId: lastShotId } : null;
+      const old = bean.stock || null;
+      if (JSON.stringify(old) !== JSON.stringify(stock)) {
+        bean.stock = stock;
+        await gm.putRecord('beans', bean.id, bean).catch(() => {});
+      }
     }
   }
 

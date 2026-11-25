@@ -382,6 +382,8 @@ String DialInPlugin::dialingBeanFor(const String &profileId, const String &profi
 
 void DialInPlugin::onShotSaved(int shotId) {
     Profile &profile = controller->getProfileManager()->getSelectedProfile();
+    if (stockProfileId.length() && stockProfileId == profile.id && shotId > stockShotId)
+        shotsSinceStock++;
     String bean = dialingBeanFor(profile.id, profile.label);
     if (bean.isEmpty())
         return;
@@ -815,8 +817,20 @@ void DialInPlugin::loop() {
     }
 }
 
+// Shots left in the bag of the coffee on the active profile, or -1 when unknown.
+int DialInPlugin::stockShotsLeft() const {
+    if (stockLeftG < 0 || stockDose <= 0)
+        return -1;
+    const float left = stockLeftG - shotsSinceStock * stockDose;
+    return left <= 0 ? 0 : (int)(left / stockDose);
+}
+
 void DialInPlugin::refreshExpiry() {
     String found;
+    String stockBeanProfile;
+    float leftG = -1;
+    float dose = 18;
+    long shotId = -1;
     fs::FS *fs = storage();
     time_t t = time(nullptr);
     struct tm local;
@@ -827,28 +841,47 @@ void DialInPlugin::refreshExpiry() {
         const String profileId = controller->getProfileManager()->getSelectedProfile().id;
         File d = fs->open(String(DATA_DIR) + "/beans", "r");
         if (d && d.isDirectory() && profileId.length()) {
+            bool done = false;
             File f = d.openNextFile();
-            while (f && found.isEmpty()) {
+            while (f && !done) {
                 if (!f.isDirectory()) {
                     JsonDocument filter;
                     filter["id"] = true;
                     filter["profileId"] = true;
                     filter["useBy"] = true;
                     filter["useByIgnored"] = true;
+                    filter["stock"] = true;
                     JsonDocument doc;
                     if (deserializeJson(doc, f, DeserializationOption::Filter(filter)) == DeserializationError::Ok &&
-                        profileId == (doc["profileId"] | "") && !(doc["useByIgnored"] | false) &&
-                        isPastDate(doc["useBy"] | "", today))
-                        found = doc["id"] | "coffee";
+                        profileId == (doc["profileId"] | "")) {
+                        done = true; // the coffee on the active profile
+                        if (!(doc["useByIgnored"] | false) && isPastDate(doc["useBy"] | "", today))
+                            found = doc["id"] | "coffee";
+                        if (doc["stock"].is<JsonObject>()) {
+                            stockBeanProfile = profileId;
+                            leftG = doc["stock"]["leftG"] | -1.0f;
+                            dose = doc["stock"]["dose"] | 18.0f;
+                            shotId = doc["stock"]["shotId"] | -1;
+                        }
+                    }
                 }
                 f.close();
-                f = d.openNextFile();
+                if (!done)
+                    f = d.openNextFile();
             }
         }
     }
     if (found != expiredBean)
         ESP_LOGI(TAG, "Coffee past use-by: %s", found.length() ? found.c_str() : "none");
     expiredBean = found;
+    // Only a figure the app has updated (new shot id) restarts the count of shots
+    // pulled since; a plain re-read must not forget them.
+    if (stockBeanProfile != stockProfileId || shotId != stockShotId)
+        shotsSinceStock = 0;
+    stockProfileId = stockBeanProfile;
+    stockLeftG = leftG;
+    stockDose = dose > 0 ? dose : 18;
+    stockShotId = shotId;
 }
 
 // ---------------------------------------------------------------- roaster logo

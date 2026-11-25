@@ -145,13 +145,13 @@ async function renderProfiles() {
   }
   list.innerHTML = '<li class="muted">Loading…</li>';
   try {
-    const profiles = (await gm.listProfiles()).filter(p => !p.utility);
+    let profiles = (await gm.listProfiles()).filter(p => !p.utility);
     if (!profiles.length) {
       list.innerHTML = '<li class="muted">No brew profiles found.</li>';
       return;
     }
     const selectedId = gm.status?.puid;
-    const [checks, beans] = await Promise.all([
+    const [checks, beans, recent] = await Promise.all([
       Promise.all(
         profiles.map(p => {
           const copy = { ...p };
@@ -160,7 +160,19 @@ async function renderProfiles() {
         }),
       ),
       gm.getAll('beans').catch(() => []),
+      gm.recentShots(50).catch(() => []),
     ]);
+    // Most recently used first; profiles with no shots in the recent window keep
+    // their stored order after them.
+    const lastUsed = new Map();
+    for (const e of recent) {
+      const t = Number(e.timestamp) || 0;
+      if (e.profileId && t > (lastUsed.get(e.profileId) || 0)) lastUsed.set(e.profileId, t);
+    }
+    profiles = profiles
+      .map((p, i) => ({ p, i, t: lastUsed.get(p.id) || 0 }))
+      .sort((a, b) => b.t - a.t || a.i - b.i)
+      .map(x => x.p);
     const beanFor = Object.fromEntries(beans.filter(b => b.profileId).map(b => [b.profileId, b]));
     const blank = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><text x="24" y="31" font-size="22" text-anchor="middle">☕</text></svg>');
     list.innerHTML = profiles
@@ -172,7 +184,8 @@ async function renderProfiles() {
           : `<details class="limits"><summary><span class="pill alarm">⚠ Limits</span></summary>
               <p class="small muted">Outside the safety limits. It still brews normally; Dial-in just won't create or edit profiles like it.</p>
               <ul class="errors">${c.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>`;
-        const meta = [bean?.roaster, p.temperature ? `${p.temperature} °C` : '', `${p.phases?.length || 0} phase${p.phases?.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+        const used = lastUsed.get(p.id);
+        const meta = [bean?.roaster, used ? `last used ${relativeDay(used)}` : '', p.temperature ? `${p.temperature} °C` : '', `${p.phases?.length || 0} phase${p.phases?.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
         return `<li class="with-thumb"><img class="thumb" alt="" data-pid="${esc(p.id)}" src="${esc(bean ? thumbSrc(bean) : blank)}"/>
           <div class="grow"><div class="row"><strong class="clip">${esc(p.label)}</strong>${p.id === selectedId ? '<span class="pill">Active</span>' : ''}${c.ok ? status : ''}</div>
           <div class="muted small">${esc(meta)}</div>${c.ok ? '' : status}</div></li>`;
@@ -343,3 +356,14 @@ initFeedback({
 window.__dialinStarted = true;
 gm.connect();
 showTab((location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot');
+
+// "today" / "yesterday" / "6 days ago" / a date, from a shot timestamp in seconds.
+function relativeDay(epochSeconds) {
+  const then = new Date(epochSeconds * 1000);
+  const startOf = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOf(new Date()) - startOf(then)) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return then.toLocaleDateString();
+}

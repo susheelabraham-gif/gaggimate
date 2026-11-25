@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.4.1"
+#define DIALIN_PLUGIN_VERSION "0.5.0"
 // GaggiMate 1.10 added ratio targets and a profile dose.
 #define DIALIN_HAS_RATIO_TARGET 1
 
@@ -39,6 +39,11 @@ class DialInPlugin : public Plugin {
     // True when the active profile belongs to a coffee past its use-by date (the
     // date the app stores as "useBy" on the coffee). Cached; cheap to call.
     bool isCoffeeExpired() const { return expiredBean.length() > 0; }
+
+    // True when the active profile's coffee has less than LOW_STOCK_SHOTS doses left.
+    // The app stores what is left after the shot id it counted; the plugin subtracts
+    // the shots pulled since then, so the figure stays right between app visits.
+    bool isCoffeeLow() const { return stockShotsLeft() >= 0 && stockShotsLeft() < LOW_STOCK_SHOTS; }
 
     // Exposed for tests: "YYYY-MM-DD" strictly before today's date.
     static bool isPastDate(const String &useBy, const String &today);
@@ -63,6 +68,7 @@ class DialInPlugin : public Plugin {
     void onShotSaved(int shotId);
     String dialingBeanFor(const String &profileId, const String &profileLabel);
     void refreshExpiry();
+    int stockShotsLeft() const;
     void loadState();
     void saveState();
     void serveIndex(AsyncWebServerRequest *request);
@@ -82,7 +88,13 @@ class DialInPlugin : public Plugin {
     int pendingShotId = -1;
     String pendingBean;
 
+    static constexpr int LOW_STOCK_SHOTS = 4;
     String expiredBean;
+    String stockProfileId; // profile the cached stock belongs to
+    float stockLeftG = -1;  // grams left when the app last counted (-1: unknown)
+    float stockDose = 18;
+    long stockShotId = -1;  // last shot the app had counted
+    int shotsSinceStock = 0;
     volatile bool expiryDirty = true;
     unsigned long lastExpiryCheck = 0;
 

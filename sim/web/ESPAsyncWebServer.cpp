@@ -601,7 +601,8 @@ void AsyncWebServer::dispatch(Conn &c, AsyncWebServerRequest &req) {
             // Content type by extension, as the real ESPAsyncWebServer does.
             static const std::pair<const char *, const char *> kTypes[] = {
                 {".html", "text/html"}, {".js", "application/javascript"}, {".css", "text/css"},
-                {".json", "application/json"}, {".svg", "image/svg+xml"}, {".png", "image/png"}};
+                {".json", "application/json"}, {".svg", "image/svg+xml"}, {".png", "image/png"},
+                {".webmanifest", "application/manifest+json"}};
             const char *type = "application/octet-stream";
             for (auto &t : kTypes)
                 if (rel.size() >= strlen(t.first) && rel.compare(rel.size() - strlen(t.first), std::string::npos, t.first) == 0)

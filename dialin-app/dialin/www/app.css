@@ -808,3 +808,14 @@ details.limits:not([open]) > summary .pill.alarm::after {
 .stock-box.low {
   border-color: #c62828;
 }
+
+/* Installed on the home screen (iOS/Android): keep clear of the notch and the
+   home indicator. */
+@media (display-mode: standalone) {
+  header {
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
