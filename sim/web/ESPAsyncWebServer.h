@@ -85,6 +85,8 @@ class AsyncWebServerRequest {
     AsyncWebServerResponse *beginResponse(int code, const String &contentType, const uint8_t *content, size_t len);
     AsyncWebServerResponse *beginResponse(const String &contentType, size_t len, AwsResponseFiller callback);
     AsyncResponseStream *beginResponseStream(const String &contentType);
+    // Like the real library: serves path, or path.gz with Content-Encoding: gzip.
+    AsyncWebServerResponse *beginResponse(FS &fs, const String &path, const String &contentType);
     // Like the real library: the filler is called until it returns 0.
     AsyncWebServerResponse *beginChunkedResponse(const String &contentType, AwsResponseFiller callback);
     bool hasHeader(const char *name) const { return _headers.count(lower(name)) > 0; }

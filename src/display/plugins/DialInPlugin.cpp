@@ -557,12 +557,14 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
     // server (backward-compatible matching), which made the redirect loop forever.
     server.on(AsyncURIMatcher::exact("/dialin"), HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/dialin/"); });
     server.on(AsyncURIMatcher::exact("/dialin/"), HTTP_GET, [this](AsyncWebServerRequest *request) { serveIndex(request); });
+    server.on(AsyncURIMatcher::exact("/dialin/index.html"), HTTP_GET,
+              [this](AsyncWebServerRequest *request) { serveIndex(request); });
     if (fs::FS *fs = storage()) {
-        // The files are stored gzipped, so the server's ETag is the gzip CRC: it changes
-        // with the content (unlike file timestamps, which are the same for every version
-        // because the app is written at start-up before the clock is set). no-cache =
-        // browsers keep a copy and only re-download when the ETag changed (else 304).
-        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-cache");
+        // Every reference carries ?v=<app version>, so a file's URL changes whenever its
+        // contents do. The browser can then keep these for a week without asking the
+        // machine about them again; only the page itself (serveIndex) is re-checked, and
+        // it brings the new URLs with it.
+        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("public, max-age=604800, immutable");
     }
 
     server.on("/api/dialin/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus(request); });
@@ -595,7 +597,11 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
 void DialInPlugin::serveIndex(AsyncWebServerRequest *request) {
     fs::FS *fs = storage();
     if (fs != nullptr && (fs->exists(INDEX_GZ) || fs->exists(INDEX_PATH))) {
-        request->send(*fs, INDEX_PATH, "text/html"); // falls back to index.html.gz
+        // no-store: the page is small, and it must never be the stale half of a mismatched
+        // pair with the files it points at.
+        AsyncWebServerResponse *response = request->beginResponse(*fs, INDEX_PATH, "text/html");
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
         return;
     }
     request->send(200, "text/html", FALLBACK_PAGE);
@@ -789,12 +795,12 @@ void DialInPlugin::handleData(AsyncWebServerRequest *request, const std::string 
             sendError(request, 500, "Could not finish saving the record.");
             return;
         }
-        expiryDirty = true;
+        expiryDirty = expiryDirty || collection == "beans";
         request->send(200, "application/json", "{\"ok\":true}");
     } else if (method == HTTP_DELETE) {
         if (fs->exists(path))
             fs->remove(path);
-        expiryDirty = true;
+        expiryDirty = expiryDirty || collection == "beans";
         request->send(200, "application/json", "{\"ok\":true}");
     } else {
         sendError(request, 405, "Method not allowed.");

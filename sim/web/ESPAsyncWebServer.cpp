@@ -276,6 +276,27 @@ static std::string gzEtag(File &f) {
     return e;
 }
 
+AsyncWebServerResponse *AsyncWebServerRequest::beginResponse(FS &fs, const String &path, const String &contentType) {
+    auto *r = new AsyncWebServerResponse();
+    r->_contentType = contentType;
+    File f = fs.open(path.c_str(), "r");
+    if (!f) {
+        f = fs.open((path + ".gz").c_str(), "r");
+        if (f)
+            r->addHeader("Content-Encoding", "gzip");
+    }
+    if (!f) {
+        r->_code = 404;
+        return r;
+    }
+    uint8_t chunk[4096];
+    size_t n;
+    while ((n = f.read(chunk, sizeof(chunk))) > 0)
+        r->_body.append((const char *)chunk, n);
+    f.close();
+    return r;
+}
+
 AsyncResponseStream *AsyncWebServerRequest::beginResponseStream(const String &contentType) {
     auto *r = new AsyncResponseStream();
     r->_contentType = contentType;

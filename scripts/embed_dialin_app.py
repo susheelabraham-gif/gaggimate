@@ -12,12 +12,30 @@ and revalidate cheaply (and the content-based ETag changes with every new versio
 """
 import gzip
 import hashlib
+import re
 import os
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "dialin-app", "dialin", "www")
 OUT = os.path.join(ROOT, "src", "display", "plugins", "dialin", "app_bundle.h")
+
+
+ASSET = re.compile(
+    rb"""((?:from|import)\s*\(?\s*['"]|src=['"]|href=['"]|"src"\s*:\s*['"])((?:\./)?[\w./-]+\.(?:js|css|png|svg|webmanifest))(['"])"""
+)
+
+
+def add_version(rel, data, version):
+    """Point every reference at <file>?v=<hash>.
+
+    The URLs then change with each build, so the browser can keep the files for a
+    long time instead of asking the machine about all of them on every visit.
+    index.html itself is always re-checked, and it carries the new URLs.
+    """
+    if not rel.endswith((".html", ".js", ".webmanifest")):
+        return data
+    return ASSET.sub(lambda m: m.group(1) + m.group(2) + b"?v=" + version.encode() + m.group(3), data)
 
 
 def main():
@@ -48,6 +66,7 @@ def main():
         "    size_t size;",
         "};",
     ]
+    files = [(rel, add_version(rel, data, version)) for rel, data in files]
     packed = [(rel + ".gz", gzip.compress(data, compresslevel=9, mtime=0)) for rel, data in files]
     for i, (rel, data) in enumerate(packed):
         body = ",".join(str(b) for b in data)

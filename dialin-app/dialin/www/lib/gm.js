@@ -12,6 +12,10 @@ export class GaggiMate extends EventTarget {
     this.nextRid = 1;
     this.status = null;
     this.connected = false;
+    // One page load asks for the same things from several places (last shot, coffees,
+    // feedback). Reading the SD card is slow, so identical GETs within a few seconds
+    // share one request. Any write clears it.
+    this.cache = new Map();
   }
 
   connect() {
@@ -53,6 +57,7 @@ export class GaggiMate extends EventTarget {
       this.status = { ...(this.status || {}), ...msg };
       this.dispatchEvent(new CustomEvent('status', { detail: this.status }));
     } else if (msg.tp) {
+      if (msg.tp === 'evt:history-shot-saved') this.forget('recent:'); // a new shot: re-read the index
       this.dispatchEvent(new CustomEvent(msg.tp, { detail: msg }));
     }
   }
@@ -93,10 +98,31 @@ export class GaggiMate extends EventTarget {
   }
 
   // ---- shot history files
+  // Share an in-flight or just-finished GET between callers (default 4 s).
+  once(key, make, ttl = 4000) {
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < ttl) return hit.promise;
+    const promise = make().catch(err => {
+      this.cache.delete(key);
+      throw err;
+    });
+    this.cache.set(key, { at: Date.now(), promise });
+    return promise;
+  }
+
+  forget(prefix = '') {
+    for (const k of [...this.cache.keys()]) if (k.startsWith(prefix)) this.cache.delete(k);
+  }
+
+  // One read covers every caller: the index is small, so always ask for the most we
+  // need (50) and hand out the first few when that is all someone wants.
   async recentShots(limit = 8) {
-    const res = await fetch(`/api/history/recent.bin?limit=${limit}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Shot list unavailable (${res.status})`);
-    return indexToShotList(parseBinaryIndex(await res.arrayBuffer()));
+    const all = await this.once('recent', async () => {
+      const res = await fetch('/api/history/recent.bin?limit=50', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Shot list unavailable (${res.status})`);
+      return indexToShotList(parseBinaryIndex(await res.arrayBuffer()));
+    });
+    return limit >= 50 ? all : all.slice(0, limit);
   }
 
   async loadShot(id) {
@@ -150,13 +176,19 @@ export class GaggiMate extends EventTarget {
     const res = await this.api('GET', `/data/${collection}`);
     return res.ids || [];
   }
-  async getRecord(collection, id) {
-    const res = await fetch(`/api/dialin/data/${collection}/${id}`, { cache: 'no-store' });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Could not read ${collection}/${id} (${res.status})`);
-    return res.json();
+  getRecord(collection, id) {
+    return this.once(`rec:${collection}/${id}`, async () => {
+      const res = await fetch(`/api/dialin/data/${collection}/${id}`, { cache: 'no-store' });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`Could not read ${collection}/${id} (${res.status})`);
+      return res.json();
+    });
   }
-  async getAll(collection) {
+  getAll(collection) {
+    return this.once(`all:${collection}`, () => this.fetchAll(collection));
+  }
+
+  async fetchAll(collection) {
     // One request for the whole collection (Dial-in plugin 0.4+); older firmware: one per record.
     try {
       const res = await fetch(`/api/dialin/data/${collection}?all=1`, { cache: 'no-store' });
@@ -174,9 +206,13 @@ export class GaggiMate extends EventTarget {
   async putRecord(collection, id, record) {
     const res = await this.api('POST', `/data/${collection}/${id}`, record);
     if (!res.ok) throw new Error((res.errors || ['Could not save'])[0]);
+    this.forget(`all:${collection}`);
+    this.forget(`rec:${collection}/${id}`);
     return record;
   }
   deleteRecord(collection, id) {
+    this.forget(`all:${collection}`);
+    this.forget(`rec:${collection}/${id}`);
     return this.api('DELETE', `/data/${collection}/${id}`);
   }
 }

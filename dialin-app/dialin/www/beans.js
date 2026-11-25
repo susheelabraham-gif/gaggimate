@@ -240,7 +240,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       ${b.confidence ? `<span class="pill ${b.confidence === 'high' ? 'ok' : b.confidence === 'low' ? 'warn' : ''}">${b.confidence} confidence</span>` : ''}</div>
       ${edit ? thumbBlock(b) : ''}
       ${edit ? bagBlock() : ''}
-      ${state.relooked ? '<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.</p>' : ''}
+      ${state.relooked ? `<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.${state.lookupNote ? ` ${esc(state.lookupNote)}` : ''}</p>` : ''}
       ${state.relooked ? '' : `<p class="muted small">${edit ? 'Edit the details or look the coffee up again. Your profile, grind and rated shots are kept.' : "Correct anything that's wrong. Roast level matters most: it sets the salami plan."}</p>`}
       ${beanField('Coffee name', 'name', b.name, 'required')}
       ${beanField('Roaster', 'roaster', b.roaster)}
@@ -673,7 +673,14 @@ export function initBeans({ gm, root, toast, getSettings }) {
       const merged = mergeResearch(b, found);
       if (found.logoUrl && b.thumbSource !== 'logo') Object.assign(merged, await thumbFields(merged));
       done();
-      show('edit', { bean: merged, relooked: true });
+      const r = found.recipe;
+      show('edit', {
+        bean: merged,
+        relooked: true,
+        lookupNote: r
+          ? `Espresso recipe found: ${[r.dose && `${r.dose} g in`, r.yield && `${r.yield} g out`, r.timeS && `${r.timeS} s`].filter(Boolean).join(', ')}${r.source ? ` (${r.source})` : ''}.`
+          : 'No espresso recipe found for this coffee (a filter recipe is not used). The starting recipe will follow its roast level.',
+      });
     } catch (err) {
       done();
       toast(err.message, 'error');
@@ -1056,7 +1063,7 @@ export function mergeResearch(bean, found) {
     brewMethods: found.brewMethods,
     brewNote: found.brewNote || bean.brewNote || '',
     logoUrl: found.logoUrl || bean.logoUrl || '',
-    recipe: found.recipe || bean.recipe || null,
+    recipe: found.recipe, // a re-lookup replaces it; an old (or filter) recipe must not survive
     community: found.community.length ? found.community : bean.community || [],
     sources: found.sources.length ? found.sources : bean.sources || [],
     confidence: found.confidence,

@@ -99,8 +99,11 @@
           'lib/parseBinaryIndex.js', 'lib/parseBinaryShot.js', 'lib/thumb.js'];
         window.dialinRepair = function (btn) {
           if (btn) { btn.disabled = true; btn.textContent = 'Repairing…'; }
-          // Re-download every app file, replacing whatever copy this browser kept.
-          Promise.all(FILES.map(function (f) { return fetch(f, { cache: 'reload' }).catch(function () {}); }))
+          // Re-download every app file at the URL this page uses (with its ?v=),
+          // replacing whatever copy this browser kept.
+          var tag = document.querySelector('script[src*="app.js"]');
+          var q = tag && tag.src.indexOf('?') >= 0 ? tag.src.slice(tag.src.indexOf('?')) : '';
+          Promise.all(FILES.map(function (f) { return fetch(f + q, { cache: 'reload' }).catch(function () {}); }))
             .then(function () { location.reload(); });
         };
         setTimeout(function () {
