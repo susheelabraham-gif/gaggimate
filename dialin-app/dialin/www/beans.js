@@ -78,14 +78,14 @@ export function initBeans({ gm, root, toast, getSettings }) {
       list.innerHTML = beans
         .map(b => {
           const latest = batches.filter(x => x.beanId === b.id).sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
-          const mode = { dialing: 'Dialing in', dialed: 'Dialed in', recalibrate: 'Recalibrate', new: 'New' }[b.mode] || 'New';
+          const mode = { dialing: 'Dialing in', dialed: 'Dialed in', recalibrate: 'Recalibrate', new: 'New', stored: 'Saved only' }[b.mode] || 'New';
           return `<li><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
             <button class="link" data-act="details" data-id="${esc(b.id)}">Details, look up again or delete ›</button>
-            ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">Set up a starting profile ›</button>` : ''}
+            ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">${b.mode === 'stored' ? 'Make an espresso profile anyway ›' : 'Set up a starting profile ›'}</button>` : ''}
             ${b.profileId && b.mode === 'dialed' ? `<button class="link" data-act="set-mode" data-mode="recalibrate" data-id="${esc(b.id)}">Recalibrate (ask after every shot again) ›</button>` : ''}
             ${b.profileId && (b.mode === 'dialing' || b.mode === 'recalibrate') ? `<button class="link" data-act="set-mode" data-mode="dialed" data-id="${esc(b.id)}">Stop asking, it's dialed in ›</button>` : ''}</li>`;
         })
@@ -188,6 +188,16 @@ export function initBeans({ gm, root, toast, getSettings }) {
   function renderSalamiOffer() {
     const b = state.bean;
     const d = roastDefaults(b.roastLevel);
+    if (notForEspresso(b)) {
+      root.innerHTML = `<div class="card caution"><h2>⚠ Not recommended for espresso</h2>
+        <p>${esc(b.roaster || 'The roaster')} ${b.brewMethods?.espresso === 'not recommended' ? 'advises against espresso for' : 'roasts for filter:'} ${esc(b.name)}.${bestFor(b) ? ` Recommended for: <strong>${esc(bestFor(b))}</strong>.` : ''}</p>
+        ${b.brewNote ? `<p class="small">${esc(b.brewNote)}</p>` : ''}
+        <p class="small">As espresso it will likely taste sour and need many shots to dial in. You can store its details only and brew it another way.</p>
+        <div class="row gap"><button class="primary" data-act="store-only" autofocus>Store data only</button>
+        <button data-act="salami-setup">Salami shot anyway</button>
+        <button data-act="skip-salami">Standard start anyway</button></div></div>`;
+      return;
+    }
     root.innerHTML = `<div class="card"><h2>Start with a salami shot?</h2>
       <p>One shot split into ${d.cups} cups shows where ${esc(b.name)} turns from sour to sweet to bitter. Your tasting then sets the starting recipe.</p>
       <p class="muted small">It uses a full dose and takes about 10 minutes including tasting. You sip the cups rather than drink a normal shot.</p>
@@ -595,6 +605,11 @@ export function initBeans({ gm, root, toast, getSettings }) {
           toast(err.message, 'error');
         }
       } else if (act === 'save-bean') await saveBean(btn);
+      else if (act === 'store-only') {
+        await gm.putRecord('beans', state.bean.id, { ...state.bean, mode: 'stored', updatedAt: new Date().toISOString() });
+        toast(`${state.bean.name} saved. No espresso profile was made.`, 'ok');
+        show('list');
+      }
       else if (act === 'details') await openDetails(btn.dataset.id);
       else if (act === 'save-edit') await saveEdit(btn);
       else if (act === 'relookup') await lookUpAgain(btn);
@@ -717,4 +732,9 @@ export function mergeResearch(bean, found) {
     sources: found.sources.length ? found.sources : bean.sources || [],
     confidence: found.confidence,
   };
+}
+
+// The roaster or sources advise against espresso, or it is a filter roast.
+export function notForEspresso(b) {
+  return b?.brewMethods?.espresso === 'not recommended' || b?.roastedFor === 'filter';
 }

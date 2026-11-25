@@ -112,3 +112,11 @@ test('looking a coffee up again keeps its own details and adds the brew methods'
   assert.equal(m.dial.grind, 14);
   assert.equal(m.shots.length, 1);
 });
+
+test('a coffee the roaster advises against for espresso is flagged', async () => {
+  const { notForEspresso } = await import('../dialin/www/beans.js');
+  assert.equal(notForEspresso({ brewMethods: { espresso: 'not recommended' } }), true);
+  assert.equal(notForEspresso({ roastedFor: 'filter', brewMethods: {} }), true);
+  assert.equal(notForEspresso({ roastedFor: 'omni', brewMethods: { espresso: 'suitable' } }), false);
+  assert.equal(notForEspresso({}), false);
+});
