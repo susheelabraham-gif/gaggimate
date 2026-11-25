@@ -249,6 +249,33 @@ AsyncWebServerResponse *AsyncWebServerRequest::beginResponse(const String &conte
     }
     return r;
 }
+AsyncWebServerResponse *AsyncWebServerRequest::beginChunkedResponse(const String &contentType, AwsResponseFiller filler) {
+    auto *r = new AsyncWebServerResponse();
+    r->_contentType = contentType;
+    uint8_t buf[1460];
+    size_t index = 0, n;
+    while ((n = filler(buf, sizeof(buf), index)) > 0) {
+        r->_body.append((const char *)buf, n);
+        index += n;
+    }
+    return r;
+}
+
+// ETag of a .gz file the way the real library builds it: from the gzip CRC32 trailer.
+static std::string gzEtag(File &f) {
+    size_t size = f.size();
+    if (size < 8 || !f.seek(size - 8))
+        return "";
+    uint8_t c[4];
+    f.read(c, 4);
+    f.seek(0);
+    uint32_t crc = c[0] | (c[1] << 8) | (c[2] << 16) | ((uint32_t)c[3] << 24);
+    static const char hex[] = "0123456789ABCDEF";
+    char e[11] = {'"', hex[(crc >> 4) & 15], hex[crc & 15], hex[(crc >> 12) & 15], hex[(crc >> 8) & 15],
+                  hex[(crc >> 20) & 15], hex[(crc >> 16) & 15], hex[crc >> 28], hex[(crc >> 24) & 15], '"', 0};
+    return e;
+}
+
 AsyncResponseStream *AsyncWebServerRequest::beginResponseStream(const String &contentType) {
     auto *r = new AsyncResponseStream();
     r->_contentType = contentType;
@@ -268,12 +295,24 @@ void AsyncWebServerRequest::send(int code, const String &contentType, const Stri
 }
 void AsyncWebServerRequest::send(FS &fs, const String &path, const String &contentType) {
     File f = fs.open(path.c_str(), "r");
+    bool gz = false;
+    if (!f) { // like the real library: fall back to path.gz
+        f = fs.open((path + ".gz").c_str(), "r");
+        gz = (bool)f;
+        if (gz && hasHeader("If-None-Match") && std::string(header("If-None-Match").c_str()) == gzEtag(f)) {
+            f.close();
+            send(304, "text/plain", "");
+            return;
+        }
+    }
     if (!f) {
         send(404, "text/plain", "Not found");
         return;
     }
     AsyncWebServerResponse r;
     r._contentType = contentType;
+    if (gz)
+        r.addHeader("Content-Encoding", "gzip");
     uint8_t chunk[4096];
     size_t n;
     while ((n = f.read(chunk, sizeof(chunk))) > 0)
@@ -514,6 +553,7 @@ bool AsyncWebServer::handleHttp(Conn &c) {
     AsyncWebServerRequest req(c.fd, this);
     req._url = String(path.c_str());
     req._body = body;
+    req._headers = headers;
     req._method = method == "POST" ? HTTP_POST : method == "PUT" ? HTTP_PUT : method == "DELETE" ? HTTP_DELETE : HTTP_GET;
     auto parseArgs = [&](const std::string &s) {
         size_t i = 0;
@@ -566,7 +606,31 @@ void AsyncWebServer::dispatch(Conn &c, AsyncWebServerRequest &req) {
             for (auto &t : kTypes)
                 if (rel.size() >= strlen(t.first) && rel.compare(rel.size() - strlen(t.first), std::string::npos, t.first) == 0)
                     type = t.second;
-            req.send(*s.fs, String((s.path + rel).c_str()), type);
+            // Like AsyncStaticWebHandler: prefer file.gz (ETag = gzip CRC, 304 when it matches).
+            std::string full = s.path + rel;
+            File gzf = s.fs->open((full + ".gz").c_str(), "r");
+            const std::string cache = _staticHandlers[&s - &_static[0]].cacheControl;
+            if (gzf && !gzf.isDirectory()) {
+                std::string etag = gzEtag(gzf);
+                AsyncWebServerResponse r;
+                if (req.hasHeader("If-None-Match") && std::string(req.header("If-None-Match").c_str()) == etag) {
+                    r._code = 304;
+                    r._contentType = type;
+                } else {
+                    r._contentType = type;
+                    r.addHeader("Content-Encoding", "gzip");
+                    r.addHeader("ETag", etag.c_str());
+                    uint8_t chunk[4096];
+                    size_t n;
+                    while ((n = gzf.read(chunk, sizeof(chunk))) > 0)
+                        r._body.append((const char *)chunk, n);
+                }
+                gzf.close();
+                r.addHeader("Cache-Control", cache.c_str());
+                writeResponse(req._fd, &r);
+                return;
+            }
+            req.send(*s.fs, String(full.c_str()), type);
             return;
         }
     }

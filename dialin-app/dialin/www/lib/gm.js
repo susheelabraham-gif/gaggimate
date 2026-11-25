@@ -157,6 +157,16 @@ export class GaggiMate extends EventTarget {
     return res.json();
   }
   async getAll(collection) {
+    // One request for the whole collection (Dial-in plugin 0.4+); older firmware: one per record.
+    try {
+      const res = await fetch(`/api/dialin/data/${collection}?all=1`, { cache: 'no-store' });
+      if (res.ok) {
+        const all = await res.json();
+        if (Array.isArray(all)) return all.filter(r => r && typeof r === 'object');
+      }
+    } catch {
+      /* fall back below */
+    }
     const ids = await this.listRecords(collection);
     const records = await Promise.all(ids.map(id => this.getRecord(collection, id).catch(() => null)));
     return records.filter(Boolean);

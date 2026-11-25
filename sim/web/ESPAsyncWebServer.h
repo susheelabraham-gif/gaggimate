@@ -85,6 +85,19 @@ class AsyncWebServerRequest {
     AsyncWebServerResponse *beginResponse(int code, const String &contentType, const uint8_t *content, size_t len);
     AsyncWebServerResponse *beginResponse(const String &contentType, size_t len, AwsResponseFiller callback);
     AsyncResponseStream *beginResponseStream(const String &contentType);
+    // Like the real library: the filler is called until it returns 0.
+    AsyncWebServerResponse *beginChunkedResponse(const String &contentType, AwsResponseFiller callback);
+    bool hasHeader(const char *name) const { return _headers.count(lower(name)) > 0; }
+    String header(const char *name) const {
+        auto it = _headers.find(lower(name));
+        return it == _headers.end() ? String() : String(it->second.c_str());
+    }
+    static std::string lower(const char *s) {
+        std::string r(s);
+        for (auto &c : r)
+            c = (char)tolower(c);
+        return r;
+    }
 
     void send(AsyncWebServerResponse *response);
     void send(int code, const String &contentType = "text/plain", const String &body = String());
@@ -95,6 +108,7 @@ class AsyncWebServerRequest {
     String _url;
     int _method = HTTP_GET;
     std::map<std::string, std::string> _args;
+    std::map<std::string, std::string> _headers; // lower-case names
     std::string _body;
     int _fd;
     AsyncWebServer *_server;
@@ -146,7 +160,11 @@ class AsyncWebSocket {
 // Returned by serveStatic(); only setCacheControl() is used.
 class AsyncStaticWebHandler {
   public:
-    AsyncStaticWebHandler &setCacheControl(const char *) { return *this; }
+    AsyncStaticWebHandler &setCacheControl(const char *v) {
+        cacheControl = v;
+        return *this;
+    }
+    std::string cacheControl = "no-cache";
 };
 
 // Only prefix() is used; plain const char* URIs keep their exact-match overloads.

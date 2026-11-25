@@ -5,6 +5,8 @@
 #include <SD_MMC.h>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <vector>
 #include <display/core/Controller.h>
 #include <display/core/PluginManager.h>
 #include <display/core/ProfileManager.h>
@@ -20,6 +22,7 @@ static constexpr const char *TAG = "DialInPlugin";
 static constexpr const char *ROOT_DIR = "/dialin";
 static constexpr const char *WWW_DIR = "/dialin/www/";
 static constexpr const char *INDEX_PATH = "/dialin/www/index.html";
+static constexpr const char *INDEX_GZ = "/dialin/www/index.html.gz";
 static constexpr const char *DATA_DIR = "/dialin/data";
 static constexpr const char *LIMITS_PATH = "/dialin/limits.json";
 static constexpr const char *STATE_PATH = "/dialin/state.json";
@@ -103,6 +106,62 @@ void onWithBody(AsyncWebServer &server, const char *uri, WebRequestMethod method
 #endif
 }
 
+// Every record of a collection as one JSON array, streamed file by file so a large
+// collection never has to fit in memory: "[" rec "," rec ... "]".
+struct AllRecordsStream {
+    File dir;
+    File cur;
+    int stage = 0; // 0 "[", 1 records, 2 "]", 3 done
+    bool first = true;
+    bool comma = false;
+};
+
+void sendAllRecords(AsyncWebServerRequest *request, fs::FS &fs, const String &dirPath) {
+    auto st = std::make_shared<AllRecordsStream>();
+    st->dir = fs.open(dirPath, "r");
+    auto filler = [st](uint8_t *buf, size_t maxLen, size_t) -> size_t {
+        size_t w = 0;
+        while (w < maxLen && st->stage < 3) {
+            if (st->stage == 0) {
+                buf[w++] = '[';
+                st->stage = 1;
+            } else if (st->stage == 1) {
+                if (st->comma) {
+                    buf[w++] = ',';
+                    st->comma = false;
+                } else if (st->cur) {
+                    int n = st->cur.read(buf + w, maxLen - w);
+                    if (n > 0)
+                        w += n;
+                    else
+                        st->cur.close();
+                } else {
+                    File f = (st->dir && st->dir.isDirectory()) ? st->dir.openNextFile() : File();
+                    if (!f) {
+                        st->stage = 2;
+                        continue;
+                    }
+                    String name = f.name();
+                    if (f.isDirectory() || !name.endsWith(".json") || f.size() == 0) {
+                        f.close();
+                        continue;
+                    }
+                    st->comma = !st->first;
+                    st->first = false;
+                    st->cur = f;
+                }
+            } else {
+                buf[w++] = ']';
+                st->stage = 3;
+            }
+        }
+        if (st->stage == 3 && st->dir)
+            st->dir.close();
+        return w;
+    };
+    request->send(request->beginChunkedResponse("application/json", filler));
+}
+
 void sendJson(AsyncWebServerRequest *request, int code, JsonDocument &doc) {
     String out;
     serializeJson(doc, out);
@@ -129,6 +188,30 @@ bool ensureDir(fs::FS &fs, const String &path) {
         if (slash < 0)
             return true;
         from = slash + 1;
+    }
+}
+
+// Delete a folder's files and subfolders (not the folder itself).
+void removeTree(fs::FS &fs, const String &path) {
+    File d = fs.open(path, "r");
+    if (!d || !d.isDirectory())
+        return;
+    std::vector<String> files, dirs;
+    File f = d.openNextFile();
+    while (f) {
+        String name = f.name();
+        int s = name.lastIndexOf('/');
+        String full = path + "/" + (s >= 0 ? name.substring(s + 1) : name);
+        (f.isDirectory() ? dirs : files).push_back(full);
+        f.close();
+        f = d.openNextFile();
+    }
+    d.close();
+    for (auto &p : files)
+        fs.remove(p.c_str());
+    for (auto &p : dirs) {
+        removeTree(fs, p);
+        fs.rmdir(p.c_str());
     }
 }
 
@@ -193,6 +276,9 @@ void DialInPlugin::installApp() {
         if (current == dialin_app::VERSION)
             return;
     }
+    // Clear the old version first: a leftover uncompressed file would be served
+    // instead of (or confused with) the new .gz one.
+    removeTree(*fs, String(WWW_DIR).substring(0, strlen(WWW_DIR) - 1));
     size_t written = 0;
     for (size_t i = 0; i < dialin_app::FILE_COUNT; i++) {
         const auto &file = dialin_app::FILES[i];
@@ -470,10 +556,11 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
     server.on(AsyncURIMatcher::exact("/dialin"), HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/dialin/"); });
     server.on(AsyncURIMatcher::exact("/dialin/"), HTTP_GET, [this](AsyncWebServerRequest *request) { serveIndex(request); });
     if (fs::FS *fs = storage()) {
-        // no-store: the app files are written at start-up before the clock is set, so
-        // every version gets the same timestamp and the server's timestamp-based ETag
-        // would tell browsers an old cached copy is still current.
-        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-store");
+        // The files are stored gzipped, so the server's ETag is the gzip CRC: it changes
+        // with the content (unlike file timestamps, which are the same for every version
+        // because the app is written at start-up before the clock is set). no-cache =
+        // browsers keep a copy and only re-download when the ETag changed (else 304).
+        server.serveStatic("/dialin/", *fs, WWW_DIR).setCacheControl("no-cache");
     }
 
     server.on("/api/dialin/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus(request); });
@@ -505,8 +592,8 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
 
 void DialInPlugin::serveIndex(AsyncWebServerRequest *request) {
     fs::FS *fs = storage();
-    if (fs != nullptr && fs->exists(INDEX_PATH)) {
-        request->send(*fs, INDEX_PATH, "text/html");
+    if (fs != nullptr && (fs->exists(INDEX_GZ) || fs->exists(INDEX_PATH))) {
+        request->send(*fs, INDEX_PATH, "text/html"); // falls back to index.html.gz
         return;
     }
     request->send(200, "text/html", FALLBACK_PAGE);
@@ -519,7 +606,7 @@ void DialInPlugin::handleStatus(AsyncWebServerRequest *request) {
     doc["version"] = DIALIN_PLUGIN_VERSION;
     doc["sdCard"] = controller->isSDCard();
     doc["storage"] = fs != nullptr;
-    doc["appInstalled"] = fs != nullptr && fs->exists(INDEX_PATH);
+    doc["appInstalled"] = fs != nullptr && (fs->exists(INDEX_GZ) || fs->exists(INDEX_PATH));
     doc["appVersion"] = dialin_app::VERSION;
     doc["busy"] = controller->isActive();
     if (controller->isSDCard()) {
@@ -635,6 +722,10 @@ void DialInPlugin::handleData(AsyncWebServerRequest *request, const std::string 
     if (id.isEmpty()) {
         if (method != HTTP_GET) {
             sendError(request, 405, "Only GET is allowed on a collection.");
+            return;
+        }
+        if (request->hasArg("all")) {
+            sendAllRecords(request, *fs, dir);
             return;
         }
         JsonDocument doc;

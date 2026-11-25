@@ -198,7 +198,23 @@ export async function uploadProfileThumb(profileId, dataUrl) {
   return true;
 }
 
+// A profile's GaggiMate picture is 180 KB; keep the small version in this browser
+// for a day so the Profiles tab doesn't download every picture on each visit.
+const THUMB_TTL = 24 * 3600 * 1000;
 export async function fetchProfileThumb(profileId) {
+  const key = `dialin.pthumb.${profileId}`;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key) || 'null');
+    if (hit && Date.now() - hit.at < THUMB_TTL) return hit.url;
+  } catch {
+    /* no storage */
+  }
   const res = await fetch(`/api/profiles/image?id=${encodeURIComponent(profileId)}`, { cache: 'no-store' });
-  return res.ok ? deviceImageToDataUrl(await res.arrayBuffer()) : null;
+  const url = res.ok ? deviceImageToDataUrl(await res.arrayBuffer()) : null;
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), url }));
+  } catch {
+    /* full or unavailable: fine */
+  }
+  return url;
 }

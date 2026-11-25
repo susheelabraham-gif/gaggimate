@@ -5,7 +5,12 @@ Writes src/display/plugins/dialin/app_bundle.h with every file as a byte array
 plus a content hash. DialInPlugin copies the files to /dialin/www/ on the SD
 card at start-up whenever the hash on the card differs, so no card reader is
 needed. Run after changing the app:  python3 scripts/embed_dialin_app.py
+
+Files are stored gzip-compressed as <name>.gz: ESPAsyncWebServer serves them with
+Content-Encoding: gzip and an ETag from the gzip CRC, so browsers can cache them
+and revalidate cheaply (and the content-based ETag changes with every new version).
 """
+import gzip
 import hashlib
 import os
 import sys
@@ -43,11 +48,12 @@ def main():
         "    size_t size;",
         "};",
     ]
-    for i, (rel, data) in enumerate(files):
+    packed = [(rel + ".gz", gzip.compress(data, compresslevel=9, mtime=0)) for rel, data in files]
+    for i, (rel, data) in enumerate(packed):
         body = ",".join(str(b) for b in data)
         lines.append(f"static const uint8_t FILE_{i}[] = {{{body}}};")
     lines.append("static const File FILES[] = {")
-    for i, (rel, data) in enumerate(files):
+    for i, (rel, data) in enumerate(packed):
         lines.append(f'    {{"{rel}", FILE_{i}, {len(data)}}},')
     lines.append("};")
     lines.append(f"static constexpr size_t FILE_COUNT = {len(files)};")
@@ -59,7 +65,8 @@ def main():
         with open(OUT, "w") as f:
             f.write(new)
     total = sum(len(d) for _, d in files)
-    print(f"embed_dialin_app: {len(files)} files, {total} bytes, version {version}")
+    packed_total = sum(len(d) for _, d in packed)
+    print(f"embed_dialin_app: {len(files)} files, {total} bytes ({packed_total} gzipped), version {version}")
     if "--check" in sys.argv and new != old:
         print("app_bundle.h was out of date (regenerated)")
         sys.exit(1)
