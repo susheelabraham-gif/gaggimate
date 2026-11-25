@@ -777,3 +777,7 @@ details.limits:not([open]) > summary .pill.alarm::after {
   border-color: #c62828;
   background: color-mix(in srgb, #c62828 7%, var(--card));
 }
+
+.card.load-error {
+  border-color: #c62828;
+}

@@ -340,5 +340,6 @@ initFeedback({
     loadLastShot();
   },
 });
+window.__dialinStarted = true;
 gm.connect();
 showTab((location.hash || '#shot').slice(1).replace(/[^a-z]/g, '') || 'shot');

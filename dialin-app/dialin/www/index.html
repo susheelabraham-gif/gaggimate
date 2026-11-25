@@ -77,6 +77,39 @@
     </main>
 
     <div id="toast" class="toast" hidden></div>
+    <script>
+      // Safety net: if the app's code doesn't start (a file failed to load, or the
+      // browser kept an old copy of one), say so and offer a repair instead of hanging.
+      (function () {
+        var errors = [];
+        window.addEventListener('error', function (e) {
+          errors.push((e && e.message) || (e && e.target && e.target.src ? 'Could not load ' + e.target.src : 'Script error'));
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          errors.push(String((e && e.reason && e.reason.message) || e.reason));
+        });
+        var FILES = ['app.js', 'app.css', 'beans.js', 'feedback.js', 'lib/ai.js', 'lib/chart.js', 'lib/dialin.js', 'lib/gm.js',
+          'lib/parseBinaryIndex.js', 'lib/parseBinaryShot.js', 'lib/thumb.js'];
+        window.dialinRepair = function (btn) {
+          if (btn) { btn.disabled = true; btn.textContent = 'Repairing…'; }
+          // Re-download every app file, replacing whatever copy this browser kept.
+          Promise.all(FILES.map(function (f) { return fetch(f, { cache: 'reload' }).catch(function () {}); }))
+            .then(function () { location.reload(); });
+        };
+        setTimeout(function () {
+          if (window.__dialinStarted) return;
+          var box = document.createElement('div');
+          box.className = 'card load-error';
+          box.innerHTML = '<h2>Dial-in didn\'t start</h2>' +
+            '<p>Part of the app didn\'t load. This is usually an old copy kept by the browser.</p>' +
+            '<p><button class="primary" onclick="dialinRepair(this)">Repair and reload</button></p>' +
+            '<p class="small muted"></p>';
+          box.querySelector('.small').textContent = errors.length ? 'Details: ' + errors.slice(0, 3).join(' · ') : 'No error was reported; the machine may be slow to answer. Try again in a moment.';
+          var main = document.querySelector('main') || document.body;
+          main.insertBefore(box, main.firstChild);
+        }, 10000);
+      })();
+    </script>
     <script type="module" src="app.js"></script>
   </body>
 </html>
