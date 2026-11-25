@@ -21,7 +21,8 @@ const MAX_SHOT_S = 60;
 const MAX_CUP_WATER = 30; // ml, machine hard limit per salami cup
 const MAX_SALAMI_WATER = 100; // ml, machine hard limit per salami shot
 
-const round = (v, step = 0.5) => Math.round(v / step) * step;
+// Round to a step without floating-point noise (0.05 steps gave 3.0500000000000003).
+const round = (v, step = 0.5) => parseFloat((Math.round(v / step) * step).toFixed(6));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 export function roastDefaults(level) {
@@ -165,7 +166,19 @@ export function recommend({ bean, plan, cups, blendBest = null, shotSeconds = nu
   const maxT = limits.maxTemperature ?? 96;
   temperature = clamp(round(temperature, 0.5), minT, maxT);
 
-  const ratio = clamp(round(ratioAt(stopCup), 0.05), 1.5, 3.0);
+  const roast = roastDefaults(bean?.roastLevel);
+  const recipe = roasterRecipe(bean);
+  // A roaster who publishes a wider ratio for this coffee raises the ceiling.
+  const ceiling = Math.max(roast.maxRatio, recipe?.ratio ?? 0);
+  const ratio = clamp(round(ratioAt(stopCup), 0.05), 1.5, ceiling);
+  if (recipe) {
+    const diff = Math.abs(ratio - recipe.ratio);
+    reasons.push(
+      diff <= 0.15
+        ? `That matches ${recipe.source} (1:${fmtRatio(recipe.ratio)}).`
+        : `${recipe.source} suggests 1:${fmtRatio(recipe.ratio)}${recipe.dose && recipe.yieldG ? ` (${recipe.dose} g in, ${recipe.yieldG} g out${recipe.timeS ? ` in ${recipe.timeS} s` : ''})` : ''}; your tasting pointed to 1:${fmtRatio(ratio)}.`,
+    );
+  }
   const maxYield = limits.maxYield ?? 60;
   const yieldG = Math.min(round(dose * ratio, 0.5), maxYield);
 
@@ -189,10 +202,12 @@ export function recommend({ bean, plan, cups, blendBest = null, shotSeconds = nu
 export function startingProfile(bean, rec, dose) {
   const name = bean?.name || 'New coffee';
   const brewCap = MAX_SHOT_S - rec.preinfusion - 2;
+  const from = rec.source ? ` (${rec.source})` : '';
   return {
     label: name.slice(0, 40),
     type: 'pro',
-    description: `1:${rec.ratio.toFixed(1)} · ${dose} g in, ${rec.yieldG} g out (from salami)`,
+    dose,
+    description: `1:${fmtRatio(rec.ratio)} · ${dose} g in, ${rec.yieldG} g out${rec.targetSeconds ? ` in ~${rec.targetSeconds} s` : ''}${from}`,
     temperature: rec.temperature,
     phases: [
       {
@@ -231,6 +246,40 @@ export function slug(text) {
 
 export const SHOT_WINDOW = { fast: 24, slow: 36 }; // total shot seconds, pre-infusion included
 
+// 1:3 stays "3.0", 1:3.05 keeps its second decimal instead of reading as 3.0.
+export function fmtRatio(v) {
+  const n = Number(v) || 0;
+  return Math.abs(n * 10 - Math.round(n * 10)) < 0.001 ? n.toFixed(1) : n.toFixed(2);
+}
+
+// The roaster's own espresso recipe, filled out: ratio from dose and yield (or the
+// other way round) so every field we need is there. Null when the research found none.
+export function roasterRecipe(bean) {
+  const r = bean?.recipe;
+  if (!r) return null;
+  const n = v => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  const dose = n(r.dose);
+  const yieldG = n(r.yield);
+  let ratio = n(r.ratio);
+  if (!ratio && dose && yieldG) ratio = yieldG / dose;
+  if (!ratio) return null;
+  return {
+    dose,
+    yieldG: yieldG || (dose ? round(dose * ratio, 0.5) : null),
+    ratio: round(ratio, 0.05),
+    timeS: n(r.timeS),
+    tempC: n(r.tempC),
+    source: r.source || 'the roaster',
+  };
+}
+
+// Shot-time window for "fast" and "slow", around the roaster's target when known.
+export function shotWindow(targetSeconds = null) {
+  const t = Number(targetSeconds);
+  if (!Number.isFinite(t) || t < 15 || t > 60) return { ...SHOT_WINDOW, target: null };
+  return { fast: Math.round(t - 5), slow: Math.round(t + 6), target: Math.round(t) };
+}
+
 // Grind on the dial as text, rounded to the grinder's step.
 export function fmtGrind(v, step = 0.25) {
   return String(parseFloat(round(v, step).toFixed(2)));
@@ -240,13 +289,14 @@ export function fmtGrind(v, step = 0.25) {
 // changed together (one variable per shot).
 // shot: { seconds, yieldG, targetYield }  feedback: { taste: 'sour'|'balanced'|'bitter', rating }
 // dial: { grind, step, lastDir, goodStreak }  grinder: { step, finerIsLower }
-export function nextStep({ shot, feedback, dial, grinder, temperature, limits = {} }) {
+export function nextStep({ shot, feedback, dial, grinder, temperature, limits = {}, targetSeconds = null }) {
   const minStep = grinder?.step || 0.25;
   const finer = grinder?.finerIsLower === false ? 1 : -1; // dial direction for "finer"
   const reasons = [];
   const t = shot.seconds;
-  const fast = t > 0 && t < SHOT_WINDOW.fast;
-  const slow = t > SHOT_WINDOW.slow;
+  const win = shotWindow(targetSeconds);
+  const fast = t > 0 && t < win.fast;
+  const slow = t > win.slow;
   const short = shot.targetYield && shot.yieldG && shot.yieldG < shot.targetYield * 0.85;
   const timing = fast ? 'fast' : slow || short ? 'slow' : 'on time';
   let grindDir = 0; // -1 = finer, +1 = coarser, in taste terms

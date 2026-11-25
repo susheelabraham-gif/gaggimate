@@ -13,11 +13,13 @@ import {
   roastDefaults,
   slug,
   fmtGrind,
+  fmtRatio,
   useByFor,
   isExpired,
   localToday,
   bagStock,
   newShotsForBag,
+  roasterRecipe,
 } from './lib/dialin.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -303,7 +305,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
 
   function renderSalamiSetup() {
     const b = state.bean;
-    const dose = state.plan?.dose ?? settings().dose ?? 18;
+    const recipe = roasterRecipe(b);
+    const dose = state.plan?.dose ?? (recipe?.dose >= 7 && recipe?.dose <= 25 ? recipe.dose : null) ?? settings().dose ?? 18;
     const plan = planSalami(b, dose);
     state.plan = plan;
     const grind = startingGrind(b, settings().grinder);
@@ -433,11 +436,12 @@ export function initBeans({ gm, root, toast, getSettings }) {
       <div class="stats">
         <div class="stat"><span class="label">Dose</span><strong>${plan.dose} g</strong></div>
         <div class="stat"><span class="label">Yield</span><strong>${rec.yieldG} g</strong></div>
-        <div class="stat"><span class="label">Ratio</span><strong>1:${rec.ratio.toFixed(1)}</strong></div>
+        <div class="stat"><span class="label">Ratio</span><strong>1:${fmtRatio(rec.ratio)}</strong></div>
         <div class="stat"><span class="label">Temperature</span><strong>${rec.temperature} °C</strong></div>
       </div>
       <p><strong>${grindLine}</strong></p>
       <ul class="small">${rec.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+      ${recipeSwitch(bean, rec, plan)}
       <div id="rec-errors"></div>
       <div class="row gap"><button class="primary" data-act="save-profile">Save profile and make it active</button><button class="link" data-act="list">Not now</button></div></div>`;
   }
@@ -769,21 +773,51 @@ export function initBeans({ gm, root, toast, getSettings }) {
     show('recommendation');
   }
 
-  function standardStart() {
-    const d = roastDefaults(state.bean.roastLevel);
-    const dose = settings().dose ?? 18;
+  // Starting recipe without a salami shot: the roaster's own espresso recipe when
+  // the research found one, otherwise the usual start for that roast level.
+  function standardStart(force = null) {
+    state.rec = recipeStart(state.bean, force);
+    show('recommendation');
+  }
+
+  function recipeStart(bean, force = null) {
+    const d = roastDefaults(bean.roastLevel);
+    const recipe = roasterRecipe(bean);
+    const lim = settings().limits || {};
+    const useRoaster = recipe && force !== 'mine';
+    const dose = useRoaster && recipe.dose >= 7 && recipe.dose <= 25 ? recipe.dose : settings().dose ?? 18;
+    const ceiling = Math.max(d.maxRatio, useRoaster ? recipe.ratio : 0);
+    const ratio = Math.min(ceiling, Math.max(1.5, Math.round((useRoaster ? recipe.ratio : d.ratio) * 20) / 20));
+    // Keep the roaster's own yield when the dose matches theirs; otherwise scale it.
+    const wanted = useRoaster && recipe.yieldG && dose === recipe.dose ? recipe.yieldG : Math.round(dose * ratio * 2) / 2;
+    const yieldG = Math.min(wanted, lim.maxYield ?? 60);
     state.plan = { dose, temperature: d.temp, cups: [], expectedFlow: d.flow };
-    const ratio = state.bean.recipe?.ratio || (state.bean.recipe?.yield && state.bean.recipe?.dose ? state.bean.recipe.yield / state.bean.recipe.dose : d.ratio);
-    const r = Math.min(3, Math.max(1.5, Math.round(ratio * 20) / 20));
-    state.rec = {
-      ratio: r,
-      yieldG: Math.round(dose * r * 2) / 2,
-      temperature: Math.min(96, Math.max(85, state.bean.recipe?.tempC || d.temp)),
+    const reasons = useRoaster
+      ? [
+          `${recipe.source}: ${recipe.dose ? `${recipe.dose} g in, ` : ''}${recipe.yieldG ? `${recipe.yieldG} g out` : `1:${fmtRatio(recipe.ratio)}`}${recipe.timeS ? ` in ${recipe.timeS} s` : ''}.`,
+          yieldG < wanted ? `Yield capped at your ${yieldG} g safety limit.` : 'Starting from their recipe; the shot feedback adjusts it from here.',
+        ]
+      : [`Standard start for a ${bean.roastLevel} roast${recipe ? `, not the roaster's recipe` : ''}.`];
+    return {
+      ratio,
+      yieldG,
+      temperature: Math.min(lim.maxTemperature ?? 96, Math.max(lim.minTemperature ?? 85, (useRoaster && recipe.tempC) || d.temp)),
       preinfusion: 8,
       grindAdvice: 'keep',
-      reasons: [`Standard start for a ${state.bean.roastLevel} roast${state.bean.recipe?.source ? `, using the recipe from ${state.bean.recipe.source}` : ''}.`],
+      targetSeconds: useRoaster ? recipe.timeS || null : null,
+      source: useRoaster ? recipe.source : `standard ${bean.roastLevel} start`,
+      reasons,
     };
-    show('recommendation');
+  }
+
+  // Offer the roaster's recipe when what we propose differs from it.
+  function recipeSwitch(bean, rec, plan) {
+    const recipe = roasterRecipe(bean);
+    if (!recipe) return '';
+    const same = Math.abs(recipe.ratio - rec.ratio) < 0.05 && (!recipe.dose || recipe.dose === plan.dose);
+    if (same) return `<p class="small muted">This is ${esc(recipe.source)}'s recipe.</p>`;
+    return `<div class="row gap small"><span class="muted">${esc(recipe.source)}: ${recipe.dose ? `${recipe.dose} g in, ` : ''}${recipe.yieldG ? `${recipe.yieldG} g out` : `1:${fmtRatio(recipe.ratio)}`}${recipe.timeS ? ` in ${recipe.timeS} s` : ''}</span>
+      <button class="small-btn" data-act="use-roaster">Use their recipe</button></div>`;
   }
 
   async function saveStartingProfile(btn) {
@@ -809,7 +843,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
         profileId: res.id,
         mode: 'dialing',
         recipe: state.bean.recipe,
-        start: { dose: state.plan.dose, ...state.rec },
+        start: { dose: state.plan.dose, targetSeconds: state.rec.targetSeconds ?? roasterRecipe(state.bean)?.timeS ?? null, ...state.rec },
         salami: state.feedback ? { plan: state.plan, cups: state.feedback.cups, blendBest: state.feedback.blendBest, shotId: state.feedback.shotId } : null,
         dial: { grind, step: 2 * gstep, lastDir: 0, goodStreak: 0 },
         updatedAt: new Date().toISOString(),
@@ -906,6 +940,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
         render();
       } else if (act === 'salami-setup') show('salami-setup', { plan: null });
       else if (act === 'skip-salami') standardStart();
+      else if (act === 'use-roaster') standardStart('roaster');
+      else if (act === 'use-mine') standardStart('mine');
       else if (act === 'load-salami') await loadSalami(btn);
       else if (act === 'toggle') {
         state.feedback.cups[i][btn.dataset.t] = !state.feedback.cups[i][btn.dataset.t];

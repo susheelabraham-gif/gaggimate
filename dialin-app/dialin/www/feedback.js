@@ -164,6 +164,8 @@ export function initFeedback({ gm, toast, getSettings, isBusy, onDone }) {
         grinder: s.grinder,
         temperature: current.profile?.temperature ?? 93,
         limits: s.limits || {},
+        // Judge "fast" and "slow" against the roaster's time when they gave one.
+        targetSeconds: bean.start?.targetSeconds ?? bean.recipe?.timeS ?? null,
       });
 
       // 3. Profile: new temperature if any, and the grind to use shown in its name on the machine.

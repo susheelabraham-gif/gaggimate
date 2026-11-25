@@ -235,3 +235,29 @@ test('bag shot counting is incremental and ignores other profiles', async () => 
   assert.equal(r2.count, 1);
   assert.equal(r2.lastShotId, 11);
 });
+
+test("the roaster's espresso recipe drives the starting ratio, not a 1:3 cap", async () => {
+  const { roasterRecipe, shotWindow, recommend } = await import('../dialin/www/lib/dialin.js');
+  // Hola Coffee San Isidro: 17 g in, 52 g out in 29 s
+  const bean = { roastLevel: 'medium', recipe: { dose: 17, yield: 52, ratio: null, timeS: 29, tempC: null, source: 'Hola Coffee' } };
+  const r = roasterRecipe(bean);
+  assert.equal(r.dose, 17);
+  assert.equal(r.yieldG, 52);
+  assert.equal(r.ratio, 3.05);
+  assert.equal(r.timeS, 29);
+  // ratio from a yield-only recipe
+  assert.equal(roasterRecipe({ recipe: { dose: 18, yield: 48, timeS: 27 } }).ratio, 2.65);
+  assert.equal(roasterRecipe({ recipe: {} }), null);
+  // "fast" and "slow" follow the roaster's target time
+  assert.deepEqual(shotWindow(29), { fast: 24, slow: 35, target: 29 });
+  assert.deepEqual(shotWindow(45), { fast: 40, slow: 51, target: 45 });
+  assert.equal(shotWindow(null).slow, 36);
+  // a salami tasting that points past 1:3 is no longer clamped to 1:3
+  const rec = recommend({
+    bean,
+    plan: { dose: 17, temperature: 93, cups: [{ water: 17 }, { water: 17 }, { water: 18 }], cupFlow: 1.5 },
+    cups: [{ weight: 17, sour: true }, { weight: 17, sweet: true }, { weight: 18, sweet: true }],
+  });
+  assert.equal(rec.ratio, 3.05);
+  assert.ok(rec.reasons.some(x => x.includes('Hola Coffee')));
+});
