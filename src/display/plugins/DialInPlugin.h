@@ -21,7 +21,7 @@ class Controller;
 class PluginManager;
 struct Profile;
 
-#define DIALIN_PLUGIN_VERSION "0.3.0"
+#define DIALIN_PLUGIN_VERSION "0.4.0"
 // GaggiMate 1.10 added ratio targets and a profile dose.
 #define DIALIN_HAS_RATIO_TARGET 1
 
@@ -59,11 +59,27 @@ class DialInPlugin : public Plugin {
     void saveState();
     void serveIndex(AsyncWebServerRequest *request);
 
+    // Roaster logo download for profile thumbnails: browsers can't read images from
+    // most other sites (CORS), so the display fetches one over HTTPS (trusting only
+    // GaggiMate's reviewed CA list) into /dialin/logo.tmp, in a background task.
+    void handleLogoStart(AsyncWebServerRequest *request, const std::string &body);
+    void handleLogoStatus(AsyncWebServerRequest *request);
+    void handleLogoData(AsyncWebServerRequest *request);
+    static void logoTask(void *arg);
+    void fetchLogo();
+
     Controller *controller = nullptr;
     PluginManager *pluginManager = nullptr;
     dialin::SafetyLimits limits{};
     int pendingShotId = -1;
     String pendingBean;
+
+    enum LogoState { LOGO_IDLE, LOGO_PENDING, LOGO_DONE, LOGO_ERROR };
+    volatile int logoState = LOGO_IDLE;
+    String logoUrl;
+    String logoError;
+    String logoType;
+    size_t logoBytes = 0;
 };
 
 extern DialInPlugin DialIn;

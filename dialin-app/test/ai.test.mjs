@@ -120,3 +120,15 @@ test('a coffee the roaster advises against for espresso is flagged', async () =>
   assert.equal(notForEspresso({ roastedFor: 'omni', brewMethods: { espresso: 'suitable' } }), false);
   assert.equal(notForEspresso({}), false);
 });
+
+test('roaster thumbnails: initials, stable colours and logo links', async () => {
+  const { initials, tileColor } = await import('../dialin/www/lib/thumb.js');
+  assert.equal(initials('Hola Coffee'), 'H');
+  assert.equal(initials('Square Mile Coffee Roasters'), 'SM');
+  assert.equal(initials('Blue Tokai'), 'BT');
+  assert.equal(tileColor('Hola'), tileColor('Hola'));
+  assert.notEqual(tileColor('Hola'), tileColor('Blue Tokai'));
+  assert.equal(normalizeBean({ logoUrl: 'https://holacoffee.in/logo.png' }).logoUrl, 'https://holacoffee.in/logo.png');
+  assert.equal(normalizeBean({ logoUrl: 'http://x.com/a.png' }).logoUrl, '');
+  assert.equal(normalizeBean({ logoUrl: 'javascript:alert(1)' }).logoUrl, '');
+});

@@ -656,3 +656,67 @@ button.danger {
 .card.caution h2 {
   color: var(--warn);
 }
+
+.with-thumb {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+img.thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+img.thumb.big {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+}
+.thumb-edit {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 4px 0 12px;
+}
+
+.pill.alarm {
+  background: #c62828;
+  color: #fff;
+  cursor: pointer;
+}
+.ok-mark {
+  color: var(--ok);
+  font-weight: 700;
+  margin-left: auto;
+}
+details.limits {
+  margin-top: 4px;
+}
+details.limits > summary {
+  list-style: none;
+  display: inline-block;
+  cursor: pointer;
+}
+details.limits > summary::-webkit-details-marker {
+  display: none;
+}
+details.limits[open] > summary .pill.alarm::after {
+  content: ' ▴';
+}
+details.limits:not([open]) > summary .pill.alarm::after {
+  content: ' ▾';
+}
+.clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

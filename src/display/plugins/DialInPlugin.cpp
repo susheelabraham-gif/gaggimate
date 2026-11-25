@@ -10,6 +10,11 @@
 #include <display/core/ProfileManager.h>
 #include <display/models/profile.h>
 #include <display/plugins/dialin/app_bundle.h>
+#ifndef GAGGIMATE_SIM
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ca_bundle.h>
+#endif
 
 static constexpr const char *TAG = "DialInPlugin";
 static constexpr const char *ROOT_DIR = "/dialin";
@@ -20,6 +25,8 @@ static constexpr const char *LIMITS_PATH = "/dialin/limits.json";
 static constexpr const char *STATE_PATH = "/dialin/state.json";
 static constexpr const char *DATA_PREFIX = "/api/dialin/data/";
 static constexpr size_t MAX_BODY = 64 * 1024;
+static constexpr const char *LOGO_PATH = "/dialin/logo.tmp";
+static constexpr size_t MAX_LOGO = 512 * 1024;
 
 DialInPlugin DialIn;
 
@@ -479,6 +486,10 @@ void DialInPlugin::attachRoutes(AsyncWebServer &server) {
                [this](AsyncWebServerRequest *request, const std::string &body) { handleProfileCheck(request, body, false); });
     onWithBody(server, "/api/dialin/profile/save", HTTP_POST,
                [this](AsyncWebServerRequest *request, const std::string &body) { handleProfileCheck(request, body, true); });
+    onWithBody(server, "/api/dialin/logo", HTTP_POST,
+               [this](AsyncWebServerRequest *request, const std::string &body) { handleLogoStart(request, body); });
+    server.on(AsyncURIMatcher::exact("/api/dialin/logo/data"), HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogoData(request); });
+    server.on(AsyncURIMatcher::exact("/api/dialin/logo"), HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogoStatus(request); });
 
     BodyHandler dataHandler = [this](AsyncWebServerRequest *request, const std::string &body) { handleData(request, body); };
 #ifndef GAGGIMATE_SIM
@@ -689,4 +700,170 @@ void DialInPlugin::handleData(AsyncWebServerRequest *request, const std::string 
     } else {
         sendError(request, 405, "Method not allowed.");
     }
+}
+
+// ---------------------------------------------------------------- roaster logo
+
+// Body: {"url": "https://..."}. Starts one download at a time.
+void DialInPlugin::handleLogoStart(AsyncWebServerRequest *request, const std::string &body) {
+    JsonDocument in;
+    deserializeJson(in, body);
+    String url = in["url"] | "";
+    JsonDocument doc;
+    if (!url.startsWith("https://") || url.length() > 500 || url.indexOf(' ') >= 0) {
+        doc["ok"] = false;
+        doc["error"] = "Only https image links are allowed";
+        sendJson(request, 400, doc);
+        return;
+    }
+    if (storage() == nullptr || !controller->isSDCard()) {
+        doc["ok"] = false;
+        doc["error"] = "No SD card";
+        sendJson(request, 503, doc);
+        return;
+    }
+    if (logoState == LOGO_PENDING) {
+        doc["ok"] = false;
+        doc["error"] = "Another logo download is running";
+        sendJson(request, 409, doc);
+        return;
+    }
+    if (controller->isActive() || controller->isUpdating()) {
+        doc["ok"] = false;
+        doc["error"] = "The machine is busy";
+        sendJson(request, 409, doc);
+        return;
+    }
+    logoUrl = url;
+    logoError = "";
+    logoType = "";
+    logoBytes = 0;
+    logoState = LOGO_PENDING;
+#ifdef GAGGIMATE_SIM
+    logoError = "Logo download isn't available in the simulator";
+    logoState = LOGO_ERROR;
+#else
+    if (xTaskCreate(logoTask, "dialinLogo", 12288, this, 1, nullptr) != pdPASS) {
+        logoError = "Could not start the download";
+        logoState = LOGO_ERROR;
+    }
+#endif
+    doc["ok"] = logoState != LOGO_ERROR;
+    if (logoState == LOGO_ERROR)
+        doc["error"] = logoError;
+    sendJson(request, logoState == LOGO_ERROR ? 503 : 202, doc);
+}
+
+void DialInPlugin::handleLogoStatus(AsyncWebServerRequest *request) {
+    static const char *names[] = {"idle", "pending", "done", "error"};
+    JsonDocument doc;
+    doc["ok"] = true;
+    doc["state"] = names[logoState];
+    if (logoState == LOGO_ERROR)
+        doc["error"] = logoError;
+    if (logoState == LOGO_DONE) {
+        doc["bytes"] = (int)logoBytes;
+        doc["type"] = logoType;
+    }
+    sendJson(request, 200, doc);
+}
+
+void DialInPlugin::handleLogoData(AsyncWebServerRequest *request) {
+    fs::FS *fs = storage();
+    if (logoState != LOGO_DONE || fs == nullptr || !fs->exists(LOGO_PATH)) {
+        request->send(404, "text/plain", "No logo");
+        return;
+    }
+    request->send(*fs, LOGO_PATH, logoType.c_str()); // the app fetches with cache: 'no-store'
+}
+
+void DialInPlugin::logoTask(void *arg) {
+    static_cast<DialInPlugin *>(arg)->fetchLogo();
+    vTaskDelete(nullptr);
+}
+
+void DialInPlugin::fetchLogo() {
+#ifndef GAGGIMATE_SIM
+    fs::FS *fs = storage();
+    String error;
+    {
+        WiFiClientSecure client;
+        client.setCACertBundle(gm_ca_bundle);
+        HTTPClient http;
+        http.useHTTP10(true); // no chunked encoding, so the stream is the raw body
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+        http.setRedirectLimit(4);
+        http.setTimeout(10000);
+        http.setUserAgent("GaggiMate-DialIn/" DIALIN_PLUGIN_VERSION);
+        const char *keys[] = {"Content-Type"};
+        http.collectHeaders(keys, 1);
+        if (!http.begin(client, logoUrl)) {
+            error = "Bad link";
+        } else {
+            int code = http.GET();
+            String type = http.header("Content-Type");
+            int len = http.getSize();
+            if (code != HTTP_CODE_OK) {
+                error = code < 0 ? String("Could not connect (") + HTTPClient::errorToString(code) + ")" : String("The site answered ") + code;
+            } else if (!type.startsWith("image/")) {
+                error = "That link is not an image";
+            } else if (len > (int)MAX_LOGO) {
+                error = "Image too large";
+            } else {
+                File f = fs->open(LOGO_PATH, FILE_WRITE);
+                if (!f) {
+                    error = "Could not write to SD card";
+                } else {
+                    WiFiClient *stream = http.getStreamPtr();
+                    uint8_t buf[1024];
+                    size_t total = 0;
+                    unsigned long last = millis();
+                    while (http.connected() && (len < 0 || total < (size_t)len) && millis() - last < 10000) {
+                        size_t avail = stream->available();
+                        if (avail == 0) {
+                            delay(5);
+                            continue;
+                        }
+                        int n = stream->readBytes(buf, avail < sizeof(buf) ? avail : sizeof(buf));
+                        if (n <= 0)
+                            break;
+                        total += n;
+                        if (total > MAX_LOGO) {
+                            error = "Image too large";
+                            break;
+                        }
+                        f.write(buf, n);
+                        last = millis();
+                    }
+                    // drain what's left after the connection closed
+                    while (error.isEmpty() && stream->available() && total <= MAX_LOGO) {
+                        int n = stream->readBytes(buf, sizeof(buf));
+                        if (n <= 0)
+                            break;
+                        total += n;
+                        f.write(buf, n);
+                    }
+                    f.close();
+                    if (error.isEmpty() && (total == 0 || (len > 0 && total < (size_t)len)))
+                        error = "Download was cut short";
+                    if (error.isEmpty()) {
+                        int semi = type.indexOf(';');
+                        logoType = semi > 0 ? type.substring(0, semi) : type;
+                        logoBytes = total;
+                    }
+                }
+            }
+            http.end();
+        }
+    }
+    if (error.isEmpty()) {
+        ESP_LOGI(TAG, "Logo downloaded (%u bytes)", (unsigned)logoBytes);
+        logoState = LOGO_DONE;
+    } else {
+        ESP_LOGW(TAG, "Logo download failed: %s", error.c_str());
+        fs->remove(LOGO_PATH);
+        logoError = error;
+        logoState = LOGO_ERROR;
+    }
+#endif
 }

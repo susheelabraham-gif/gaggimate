@@ -2,6 +2,7 @@
 // detection, salami diagnostic (plan → run with cup cues → tasting → recipe),
 // and saving the starting profile to the machine.
 import { researchBean, photoToBase64, aiSettings, BREW_METHODS } from './lib/ai.js';
+import { makeThumb, nameTile, toDataUrl, uploadProfileThumb } from './lib/thumb.js';
 import {
   ROAST_LEVELS,
   planSalami,
@@ -79,7 +80,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
         .map(b => {
           const latest = batches.filter(x => x.beanId === b.id).sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
           const mode = { dialing: 'Dialing in', dialed: 'Dialed in', recalibrate: 'Recalibrate', new: 'New', stored: 'Saved only' }[b.mode] || 'New';
-          return `<li><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
+          return `<li class="with-thumb"><img class="thumb" alt="" src="${esc(thumbSrc(b))}"/><div class="grow"><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
@@ -87,7 +88,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
             <button class="link" data-act="details" data-id="${esc(b.id)}">Details, look up again or delete ›</button>
             ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">${b.mode === 'stored' ? 'Make an espresso profile anyway ›' : 'Set up a starting profile ›'}</button>` : ''}
             ${b.profileId && b.mode === 'dialed' ? `<button class="link" data-act="set-mode" data-mode="recalibrate" data-id="${esc(b.id)}">Recalibrate (ask after every shot again) ›</button>` : ''}
-            ${b.profileId && (b.mode === 'dialing' || b.mode === 'recalibrate') ? `<button class="link" data-act="set-mode" data-mode="dialed" data-id="${esc(b.id)}">Stop asking, it's dialed in ›</button>` : ''}</li>`;
+            ${b.profileId && (b.mode === 'dialing' || b.mode === 'recalibrate') ? `<button class="link" data-act="set-mode" data-mode="dialed" data-id="${esc(b.id)}">Stop asking, it's dialed in ›</button>` : ''}</div></li>`;
         })
         .join('');
     } catch (err) {
@@ -139,6 +140,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       : `<div class="row gap"><button class="primary" data-act="save-bean">Save coffee</button><button class="link" data-act="list">Cancel</button></div>`;
     root.innerHTML = `<div class="card"><div class="row spread"><h2>${edit ? esc(b.name) : 'Check the details'}</h2>
       ${b.confidence ? `<span class="pill ${b.confidence === 'high' ? 'ok' : b.confidence === 'low' ? 'warn' : ''}">${b.confidence} confidence</span>` : ''}</div>
+      ${edit ? thumbBlock(b) : ''}
       ${state.relooked ? '<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.</p>' : ''}
       ${state.relooked ? '' : `<p class="muted small">${edit ? 'Edit the details or look the coffee up again. Your profile, grind and rated shots are kept.' : "Correct anything that's wrong. Roast level matters most: it sets the salami plan."}</p>`}
       ${beanField('Coffee name', 'name', b.name, 'required')}
@@ -399,6 +401,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       const { openedDate, roastDate, bagSizeG, ...beanOnly } = b;
       state.bean = { ...beanOnly, id, mode: 'new', createdAt: now, updatedAt: now };
       await gm.putRecord('beans', id, state.bean);
+      state.thumbJob = { id, promise: ensureThumb(state.bean).catch(() => null) };
       await gm.putRecord('batches', batch.id, batch);
       done();
       show('salami-offer');
@@ -423,9 +426,18 @@ export function initBeans({ gm, root, toast, getSettings }) {
       // Keep everything the dial-in loop owns; only the descriptive fields change.
       const merged = { ...current, ...b, id: current.id || b.id, profileId: current.profileId, mode: current.mode, dial: current.dial, shots: current.shots, salami: current.salami, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
       delete merged.roastLevelGuessed;
+      if (!merged.thumb) Object.assign(merged, await thumbFields(merged));
       await gm.putRecord('beans', merged.id, merged);
+      let note = '';
+      if (merged.profileId) {
+        try {
+          await uploadProfileThumb(merged.profileId, merged.thumb);
+        } catch (err) {
+          note = ` The profile picture couldn't be set: ${err.message}`;
+        }
+      }
       done();
-      toast('Coffee updated.', 'ok');
+      toast(`Coffee updated.${note}`, note ? 'error' : 'ok');
       show('list', { relooked: false });
     } catch (err) {
       done();
@@ -439,8 +451,10 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const done = busy(btn, 'Looking it up… (up to a minute)');
     try {
       const found = await researchBean({ name: [b.roaster, b.name].filter(Boolean).join(' ') });
+      const merged = mergeResearch(b, found);
+      if (found.logoUrl && b.thumbSource !== 'logo') Object.assign(merged, await thumbFields(merged));
       done();
-      show('edit', { bean: mergeResearch(b, found), relooked: true });
+      show('edit', { bean: merged, relooked: true });
     } catch (err) {
       done();
       toast(err.message, 'error');
@@ -462,6 +476,34 @@ export function initBeans({ gm, root, toast, getSettings }) {
     } catch (err) {
       done();
       toast(err.message, 'error');
+    }
+  }
+
+  async function thumbFields(b) {
+    const t = await makeThumb(b);
+    return { thumb: toDataUrl(t.canvas), thumbSource: t.source, error: t.error };
+  }
+
+  // Make and store a new coffee's thumbnail (runs in the background).
+  async function ensureThumb(bean) {
+    if (bean.thumb) return bean;
+    const t = await thumbFields(bean);
+    delete t.error;
+    const current = (await gm.getRecord('beans', bean.id)) || bean;
+    const updated = { ...current, ...t };
+    await gm.putRecord('beans', bean.id, updated);
+    if (state.bean?.id === bean.id) Object.assign(state.bean, t);
+    return updated;
+  }
+
+  // Give a new profile the coffee's thumbnail. Never blocks or fails the flow.
+  async function applyThumb(profileId) {
+    try {
+      const job = state.thumbJob?.id === state.bean.id ? state.thumbJob.promise : ensureThumb(state.bean);
+      const bean = await job;
+      await uploadProfileThumb(profileId, bean?.thumb || state.bean.thumb);
+    } catch (err) {
+      console.warn('profile thumbnail', err);
     }
   }
 
@@ -491,6 +533,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       const res = await gm.saveProfile(profile, true, { salami: true });
       if (!res.ok) throw new Error(res.errors?.join(' ') || 'The machine refused the salami profile.');
       state.run = { profileId: res.id, cup: 0, active: false, started: false, saved: false };
+      applyThumb(res.id);
       done();
       show('salami-run');
     } catch (err) {
@@ -563,6 +606,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       };
       await gm.putRecord('beans', bean.id, bean);
       state.bean = bean;
+      applyThumb(res.id);
       if (state.feedback?.shotId != null) gm.clearFeedback(state.feedback.shotId).catch(() => {});
       if (state.run?.profileId) {
         gm.request('req:profiles:delete', { id: state.run.profileId }).catch(() => {});
@@ -611,6 +655,15 @@ export function initBeans({ gm, root, toast, getSettings }) {
         show('list');
       }
       else if (act === 'details') await openDetails(btn.dataset.id);
+      else if (act === 'thumb-name' || act === 'thumb-logo') {
+        const b = readReview();
+        const done = busy(btn, act === 'thumb-logo' ? 'Fetching…' : 'Drawing…');
+        const t = act === 'thumb-logo' ? await thumbFields(b) : { thumb: toDataUrl(nameTile(b.roaster || b.name)), thumbSource: 'name' };
+        done();
+        if (act === 'thumb-logo' && t.thumbSource !== 'logo') toast(`No logo could be fetched${t.error ? `: ${t.error}` : ''}. Using a name tile.`, 'error');
+        delete t.error;
+        show('edit', { bean: { ...b, ...t } });
+      }
       else if (act === 'save-edit') await saveEdit(btn);
       else if (act === 'relookup') await lookUpAgain(btn);
       else if (act === 'delete-bean') show('delete', { bean: { ...state.bean, ...readReview() } });
@@ -683,6 +736,7 @@ function emptyBean(name = '') {
     roastedFor: '',
     brewMethods: {},
     brewNote: '',
+    logoUrl: '',
     confidence: '',
     sources: [],
   };
@@ -727,6 +781,7 @@ export function mergeResearch(bean, found) {
     roastedFor: found.roastedFor || bean.roastedFor || '',
     brewMethods: found.brewMethods,
     brewNote: found.brewNote || bean.brewNote || '',
+    logoUrl: found.logoUrl || bean.logoUrl || '',
     recipe: found.recipe || bean.recipe || null,
     community: found.community.length ? found.community : bean.community || [],
     sources: found.sources.length ? found.sources : bean.sources || [],
@@ -737,4 +792,21 @@ export function mergeResearch(bean, found) {
 // The roaster or sources advise against espresso, or it is a filter roast.
 export function notForEspresso(b) {
   return b?.brewMethods?.espresso === 'not recommended' || b?.roastedFor === 'filter';
+}
+
+const tileCache = new Map();
+export function thumbSrc(b) {
+  if (b.thumb) return b.thumb;
+  const key = b.roaster || b.name || '?';
+  if (!tileCache.has(key)) tileCache.set(key, nameTile(key, 96).toDataURL('image/png'));
+  return tileCache.get(key);
+}
+
+function thumbBlock(b) {
+  const label = { logo: "Roaster's logo", name: 'Name tile' }[b.thumbSource] || 'Not set yet (made when you save)';
+  return `<div class="thumb-edit"><img class="thumb big" alt="" src="${esc(thumbSrc(b))}"/>
+    <div><div class="small"><strong>Picture</strong> <span class="muted">${label}</span></div>
+    <div class="small muted">Shown here and on the machine's profile.</div>
+    <div class="row gap small"><button class="small-btn" data-act="thumb-logo" ${b.logoUrl ? '' : 'disabled title="Look the coffee up again to find a logo"'}>Use logo</button>
+    <button class="small-btn" data-act="thumb-name">Use name tile</button></div></div></div>`;
 }

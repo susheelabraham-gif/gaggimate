@@ -1,7 +1,8 @@
 import { GaggiMate } from './lib/gm.js';
 import { shotChart } from './lib/chart.js';
 import { aiSettings, DEFAULT_MODEL } from './lib/ai.js';
-import { initBeans } from './beans.js';
+import { initBeans, thumbSrc } from './beans.js';
+import { fetchProfileThumb } from './lib/thumb.js';
 import { initFeedback } from './feedback.js';
 
 const gm = new GaggiMate();
@@ -149,27 +150,40 @@ async function renderProfiles() {
       return;
     }
     const selectedId = gm.status?.puid;
-    const checks = await Promise.all(
-      profiles.map(p => {
-        const copy = { ...p };
-        delete copy.id; // check the values themselves, not the change from the stored copy
-        return gm.checkProfile(copy).catch(err => ({ ok: false, errors: [err.message] }));
-      }),
-    );
+    const [checks, beans] = await Promise.all([
+      Promise.all(
+        profiles.map(p => {
+          const copy = { ...p };
+          delete copy.id; // check the values themselves, not the change from the stored copy
+          return gm.checkProfile(copy).catch(err => ({ ok: false, errors: [err.message] }));
+        }),
+      ),
+      gm.getAll('beans').catch(() => []),
+    ]);
+    const beanFor = Object.fromEntries(beans.filter(b => b.profileId).map(b => [b.profileId, b]));
+    const blank = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><text x="24" y="31" font-size="22" text-anchor="middle">☕</text></svg>');
     list.innerHTML = profiles
       .map((p, i) => {
         const c = checks[i];
-        const badge = c.ok
-          ? '<span class="pill ok">Within limits</span>'
-          : '<span class="pill warn">Outside limits</span>';
-        const errs = c.ok ? '' : `<ul class="errors">${c.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`;
-        return `<li>
-          <div class="row"><strong>${esc(p.label)}</strong>${p.id === selectedId ? '<span class="pill">Active</span>' : ''}${badge}</div>
-          <div class="muted small">${esc(p.description || '')} ${p.temperature ? `· ${p.temperature} °C` : ''} · ${p.phases?.length || 0} phases</div>
-          ${errs}
-        </li>`;
+        const bean = beanFor[p.id];
+        const status = c.ok
+          ? '<span class="ok-mark" title="Within the safety limits">✓</span>'
+          : `<details class="limits"><summary><span class="pill alarm">⚠ Limits</span></summary>
+              <p class="small muted">Outside the safety limits. It still brews normally; Dial-in just won't create or edit profiles like it.</p>
+              <ul class="errors">${c.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>`;
+        const meta = [bean?.roaster, p.temperature ? `${p.temperature} °C` : '', `${p.phases?.length || 0} phase${p.phases?.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+        return `<li class="with-thumb"><img class="thumb" alt="" data-pid="${esc(p.id)}" src="${esc(bean ? thumbSrc(bean) : blank)}"/>
+          <div class="grow"><div class="row"><strong class="clip">${esc(p.label)}</strong>${p.id === selectedId ? '<span class="pill">Active</span>' : ''}${c.ok ? status : ''}</div>
+          <div class="muted small">${esc(meta)}</div>${c.ok ? '' : status}</div></li>`;
       })
       .join('');
+    // Profiles not made by Dial-in: show their GaggiMate picture, if any (one at a time).
+    for (const p of profiles.filter(p => !beanFor[p.id])) {
+      if (currentTab !== 'profiles') break;
+      const url = await fetchProfileThumb(p.id).catch(() => null);
+      const img = list.querySelector(`img[data-pid="${CSS.escape(p.id)}"]`);
+      if (url && img) img.src = url;
+    }
   } catch (err) {
     list.innerHTML = `<li class="error">${esc(err.message)}</li>`;
   }

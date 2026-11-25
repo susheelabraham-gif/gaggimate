@@ -83,6 +83,7 @@ Reply with ONE JSON object and nothing else, in this shape:
     "coldBrew": ...
   },
   "brewNote": string|null,              // one short sentence on the best way to brew it, with its source
+  "logoUrl": string|null,               // direct https link to the roaster's logo image file (png/jpg/webp/svg), ideally square: their site's icon or logo; null if not found
   "confidence": "low"|"medium"|"high",
   "sources": [{"title": string, "url": string}]
 }`;
@@ -139,6 +140,7 @@ export function normalizeBean(raw) {
       BREW_METHODS.map(([k]) => [k, BREW_RATINGS.includes(b.brewMethods?.[k]) ? b.brewMethods[k] : '']),
     ),
     brewNote: typeof b.brewNote === 'string' ? b.brewNote.slice(0, 300) : '',
+    logoUrl: /^https:\/\/\S{4,490}$/.test(b.logoUrl || '') ? b.logoUrl : '',
     confidence: ['low', 'medium', 'high'].includes(b.confidence) ? b.confidence : 'low',
     sources: Array.isArray(b.sources) ? b.sources.filter(s => /^https?:\/\//.test(s?.url || '')).slice(0, 8) : [],
   };
