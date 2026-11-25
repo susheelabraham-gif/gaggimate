@@ -624,3 +624,13 @@ body.locked {
 .next {
   font-size: 18px;
 }
+
+.brew-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.brew-chips .pill {
+  white-space: nowrap;
+}

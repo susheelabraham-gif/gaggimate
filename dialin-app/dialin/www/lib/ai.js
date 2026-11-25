@@ -2,6 +2,18 @@
 // API key (kept in this browser's localStorage only, never written to the SD card).
 import { ROAST_LEVELS } from './dialin.js';
 
+export const BREW_METHODS = [
+  ['espresso', 'Espresso'],
+  ['milk', 'Milk drinks'],
+  ['americano', 'Americano / long black'],
+  ['pourover', 'Pour-over (V60)'],
+  ['chemex', 'Chemex'],
+  ['aeropress', 'AeroPress'],
+  ['frenchPress', 'French press'],
+  ['coldBrew', 'Cold brew'],
+];
+export const BREW_RATINGS = ['recommended', 'suitable', 'not recommended'];
+
 const API_URL = 'https://api.anthropic.com/v1/messages';
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';
 
@@ -43,6 +55,7 @@ export const aiSettings = {
 
 const INSTRUCTIONS = `You identify specialty coffee beans for an espresso dial-in assistant.
 Use the photo of the bag and/or the name given. Search the web for the roaster's own product page first, then other sources (reviews, forums such as Reddit, coffee blogs) describing how this coffee behaves as espresso.
+Also find which brew methods the roaster recommends this coffee for (espresso, milk drinks, americano/long black, pour-over, Chemex, AeroPress, French press, cold brew) and whether it is an espresso, filter or omni roast. Rate a method "recommended" when the roaster or several sources recommend it, "suitable" when it is reasonable for this roast, "not recommended" when the roaster or sources advise against it.
 Only report what the label or sources say; use null for anything unknown. Never invent a roast date.
 Reply with ONE JSON object and nothing else, in this shape:
 {
@@ -58,6 +71,18 @@ Reply with ONE JSON object and nothing else, in this shape:
   "bagSizeG": number|null,
   "recipe": {"dose": number|null, "yield": number|null, "ratio": number|null, "timeS": number|null, "tempC": number|null, "source": string|null} | null,
   "community": [{"summary": string, "source": string}],   // at most 4, about espresso
+  "roastedFor": "espresso"|"filter"|"omni"|null,          // what the roaster says the roast is for
+  "brewMethods": {                      // per method: how well this coffee suits it, from the roaster first, then other sources
+    "espresso": "recommended"|"suitable"|"not recommended"|null,
+    "milk": ...,                        // flat white, cappuccino, latte
+    "americano": ...,                   // americano / long black
+    "pourover": ...,                    // V60, Kalita and similar
+    "chemex": ...,
+    "aeropress": ...,
+    "frenchPress": ...,
+    "coldBrew": ...
+  },
+  "brewNote": string|null,              // one short sentence on the best way to brew it, with its source
   "confidence": "low"|"medium"|"high",
   "sources": [{"title": string, "url": string}]
 }`;
@@ -109,6 +134,11 @@ export function normalizeBean(raw) {
     bagSizeG: num(b.bagSizeG),
     recipe,
     community: Array.isArray(b.community) ? b.community.slice(0, 4) : [],
+    roastedFor: ['espresso', 'filter', 'omni'].includes(b.roastedFor) ? b.roastedFor : '',
+    brewMethods: Object.fromEntries(
+      BREW_METHODS.map(([k]) => [k, BREW_RATINGS.includes(b.brewMethods?.[k]) ? b.brewMethods[k] : '']),
+    ),
+    brewNote: typeof b.brewNote === 'string' ? b.brewNote.slice(0, 300) : '',
     confidence: ['low', 'medium', 'high'].includes(b.confidence) ? b.confidence : 'low',
     sources: Array.isArray(b.sources) ? b.sources.filter(s => /^https?:\/\//.test(s?.url || '')).slice(0, 8) : [],
   };

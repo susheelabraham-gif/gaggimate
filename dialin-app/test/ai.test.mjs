@@ -80,3 +80,18 @@ test('normalizeBean guards unknown values and fake dates', () => {
   assert.equal(b.recipe.ratio, null);
   assert.throws(() => extractJson('no json here'));
 });
+
+test('normalizeBean keeps known brew-method ratings and drops the rest', () => {
+  const b = normalizeBean({
+    name: 'Z',
+    roastedFor: 'filter',
+    brewMethods: { espresso: 'not recommended', pourover: 'recommended', chemex: 'great', bogus: 'recommended' },
+    brewNote: 'Roaster suggests V60 at 1:16.',
+  });
+  assert.equal(b.roastedFor, 'filter');
+  assert.equal(b.brewMethods.espresso, 'not recommended');
+  assert.equal(b.brewMethods.pourover, 'recommended');
+  assert.equal(b.brewMethods.chemex, '');
+  assert.equal(b.brewMethods.bogus, undefined);
+  assert.equal(normalizeBean({ roastedFor: 'turkish' }).roastedFor, '');
+});

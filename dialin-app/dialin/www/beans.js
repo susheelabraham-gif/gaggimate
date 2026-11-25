@@ -1,7 +1,7 @@
 // Beans tab: add a coffee (photo or name → AI research → review), new-batch
 // detection, salami diagnostic (plan → run with cup cues → tasting → recipe),
 // and saving the starting profile to the machine.
-import { researchBean, photoToBase64, aiSettings } from './lib/ai.js';
+import { researchBean, photoToBase64, aiSettings, BREW_METHODS } from './lib/ai.js';
 import {
   ROAST_LEVELS,
   planSalami,
@@ -81,6 +81,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
           const mode = { dialing: 'Dialing in', dialed: 'Dialed in', recalibrate: 'Recalibrate', new: 'New' }[b.mode] || 'New';
           return `<li><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
+            ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
             ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">Set up a starting profile ›</button>` : ''}
@@ -120,6 +121,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const community = b.community?.length
       ? `<p class="small"><strong>What others say</strong></p><ul class="small">${b.community.map(c => `<li>${esc(c.summary)} <span class="muted">${esc(c.source || '')}</span></li>`).join('')}</ul>`
       : '';
+    const brew = brewHtml(b);
     const sources = b.sources?.length
       ? `<p class="small muted">Sources: ${b.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a>`).join(' · ')}</p>`
       : '';
@@ -135,7 +137,9 @@ export function initBeans({ gm, root, toast, getSettings }) {
       ${beanField('Tasting notes', 'tastingNotes', b.tastingNotes.join(', '))}
       <div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}</div>
       ${beanField('Bag size (g)', 'bagSizeG', b.bagSizeG ?? 250, 'type="number" inputmode="numeric"')}
-      ${recipe}${community}${sources}
+      <label class="field"><span>Roasted for</span>
+        <select data-k="roastedFor">${[['', 'not known'], ['espresso', 'espresso'], ['filter', 'filter'], ['omni', 'both (omni roast)']].map(([v, l]) => `<option value="${v}" ${v === (b.roastedFor || '') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${brew}${recipe}${community}${sources}
       <div class="row gap"><button class="primary" data-act="save-bean">Save coffee</button><button class="link" data-act="list">Cancel</button></div></div>`;
   }
 
@@ -576,7 +580,32 @@ function emptyBean(name = '') {
     bagSizeG: 250,
     recipe: null,
     community: [],
+    roastedFor: '',
+    brewMethods: {},
+    brewNote: '',
     confidence: '',
     sources: [],
   };
+}
+
+// Brew methods the research found, e.g. "Espresso, Milk drinks".
+function bestFor(b) {
+  return BREW_METHODS.filter(([k]) => b.brewMethods?.[k] === 'recommended')
+    .map(([, l]) => l)
+    .join(', ');
+}
+
+function brewHtml(b) {
+  const rated = BREW_METHODS.filter(([k]) => b.brewMethods?.[k]);
+  if (!rated.length && !b.brewNote && !b.roastedFor) return '';
+  const cls = { recommended: 'ok', suitable: '', 'not recommended': 'warn' };
+  const chips = rated
+    .map(([k, l]) => `<span class="pill ${cls[b.brewMethods[k]]}" title="${esc(b.brewMethods[k])}">${b.brewMethods[k] === 'not recommended' ? '✕ ' : b.brewMethods[k] === 'recommended' ? '★ ' : ''}${esc(l)}</span>`)
+    .join(' ');
+  const filterWarn =
+    b.roastedFor === 'filter' || b.brewMethods?.espresso === 'not recommended'
+      ? '<p class="small warn-text">This looks like a filter roast. As espresso it tends to taste sour: expect a finer grind, a hotter and longer shot, and more dial-in shots.</p>'
+      : '';
+  return `<p class="small"><strong>Brew methods</strong> <span class="muted">★ recommended · ✕ not recommended</span></p>
+    <div class="brew-chips">${chips}</div>${b.brewNote ? `<p class="small muted">${esc(b.brewNote)}</p>` : ''}${filterWarn}`;
 }
