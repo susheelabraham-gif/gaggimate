@@ -247,6 +247,9 @@ async function renderSettings() {
   const gb = b => (b / 1024 ** 3).toFixed(1);
   const rows = [
     ['Dial-in plugin', pluginInfo.version],
+    // The app code's own fingerprint: it changes with every build, so this says which
+    // one is really running (the plugin version alone can be the same across builds).
+    ['App version', (pluginInfo.appVersion || '—').slice(0, 8)],
     ['SD card', pluginInfo.sdCard ? 'Fitted' : 'Not found'],
     ['Space used', pluginInfo.totalBytes ? `${gb(pluginInfo.usedBytes)} of ${gb(pluginInfo.totalBytes)} GB` : '—'],
     ['App files', pluginInfo.appInstalled ? 'On SD card' : 'Missing'],
@@ -283,7 +286,7 @@ function renderAppSettings() {
     <label><span>Coffee keeps for</span><span class="input"><input name="freshDays" type="number" step="1" min="0" value="${appSettings.freshDays ?? 60}" inputmode="numeric"/><span class="unit">days</span></span>
       <span class="muted small">Days after roasting, used when the bag has no use-by date printed. 0 = only warn on printed dates.</span></label>
     <button type="submit" class="primary">Save</button>
-    <p class="muted small">Dial-in ${esc(pluginInfo?.version || '?')} · app ${esc((pluginInfo?.appVersion || '').slice(0, 8))}</p>`;
+`;
   $('#aisettings').innerHTML = `
     <label><span>Anthropic API key</span><span class="input"><input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(aiSettings.apiKey || '')}" style="width:170px;text-align:left"/></span>
       <span class="muted small">Kept in this browser only. A phone, a second browser or the app added to your home screen each need their own.</span></label>

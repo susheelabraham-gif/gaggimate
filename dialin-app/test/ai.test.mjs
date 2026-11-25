@@ -174,3 +174,19 @@ test('a filter recipe never lands in the espresso recipe field', async () => {
   assert.equal(normalizeBean({ name: 'X', recipe: { dose: 15, yield: 250, timeS: 180, source: 'filter guide' } }).recipe, null);
   assert.equal(normalizeBean({ name: 'X', recipe: { dose: 18, yield: 48, timeS: 27 } }).recipe.yield, 48);
 });
+
+test('an espresso recipe from the roaster means espresso is recommended', async () => {
+  const { notForEspresso } = await import('../dialin/www/beans.js');
+  const b = normalizeBean({
+    name: 'La Montaña',
+    recipe: { dose: 18, yield: 48, timeS: 27, source: 'Hola Coffee' },
+    roastedFor: 'filter',
+    brewMethods: { espresso: 'not recommended', pourover: 'recommended' },
+  });
+  assert.equal(b.brewMethods.espresso, 'recommended');
+  assert.equal(notForEspresso(b), false);
+  // without an espresso recipe the roaster's own advice still stands
+  const f = normalizeBean({ name: 'X', roastedFor: 'filter', brewMethods: { espresso: 'not recommended' } });
+  assert.equal(f.brewMethods.espresso, 'not recommended');
+  assert.equal(notForEspresso(f), true);
+});

@@ -55,7 +55,7 @@ export const aiSettings = {
 
 const INSTRUCTIONS = `You identify specialty coffee beans for an espresso dial-in assistant.
 Use the photos of the bag and/or the name given. Several photos may show different sides of the same bag (front with the name, back with roast and use-by dates): combine them. Search the web for the roaster's own product page first, then other sources (reviews, forums such as Reddit, coffee blogs) describing how this coffee behaves as espresso.
-Also find which brew methods the roaster recommends this coffee for (espresso, milk drinks, americano/long black, pour-over, Chemex, AeroPress, French press, cold brew) and whether it is an espresso, filter or omni roast. Rate a method "recommended" when the roaster or several sources recommend it, "suitable" when it is reasonable for this roast, "not recommended" when the roaster or sources advise against it.
+Also find which brew methods the roaster recommends this coffee for (espresso, milk drinks, americano/long black, pour-over, Chemex, AeroPress, French press, cold brew) and whether it is an espresso, filter or omni roast. Rate a method "recommended" when the roaster or several sources recommend it, "suitable" when it is reasonable for this roast, "not recommended" when the roaster or sources advise against it. A roaster who publishes an espresso recipe for a coffee recommends it for espresso, whatever else the page emphasises: never mark espresso "not recommended" in that case.
 Only report what the label or sources say; use null for anything unknown. Never invent a roast date.
 Reply with ONE JSON object and nothing else, in this shape:
 {
@@ -161,7 +161,13 @@ export function normalizeBean(raw) {
     community: Array.isArray(b.community) ? b.community.slice(0, 4) : [],
     roastedFor: ['espresso', 'filter', 'omni'].includes(b.roastedFor) ? b.roastedFor : '',
     brewMethods: Object.fromEntries(
-      BREW_METHODS.map(([k]) => [k, BREW_RATINGS.includes(b.brewMethods?.[k]) ? b.brewMethods[k] : '']),
+      BREW_METHODS.map(([k]) => {
+        let v = BREW_RATINGS.includes(b.brewMethods?.[k]) ? b.brewMethods[k] : '';
+        // The roaster printed an espresso recipe for this coffee: that is a recommendation,
+        // whatever the rest of the page emphasises.
+        if (k === 'espresso' && espressoRecipe && v === 'not recommended') v = 'recommended';
+        return [k, v];
+      }),
     ),
     brewNote: typeof b.brewNote === 'string' ? b.brewNote.slice(0, 300) : '',
     logoUrl: /^https:\/\/\S{4,490}$/.test(b.logoUrl || '') ? b.logoUrl : '',

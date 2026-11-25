@@ -1072,6 +1072,8 @@ export function mergeResearch(bean, found) {
 
 // The roaster or sources advise against espresso, or it is a filter roast.
 export function notForEspresso(b) {
+  // An espresso recipe from the roaster settles it, whatever the roast is called.
+  if (roasterRecipe(b)) return false;
   return b?.brewMethods?.espresso === 'not recommended' || b?.roastedFor === 'filter';
 }
 
