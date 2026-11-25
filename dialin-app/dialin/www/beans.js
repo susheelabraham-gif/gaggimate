@@ -1,7 +1,7 @@
 // Beans tab: add a coffee (photo or name → AI research → review), new-batch
 // detection, salami diagnostic (plan → run with cup cues → tasting → recipe),
 // and saving the starting profile to the machine.
-import { researchBean, photoToBase64, aiSettings, BREW_METHODS } from './lib/ai.js';
+import { researchBean, readBag, photoToBase64, aiSettings, BREW_METHODS } from './lib/ai.js';
 import { makeThumb, nameTile, toDataUrl, uploadProfileThumb } from './lib/thumb.js';
 import {
   ROAST_LEVELS,
@@ -13,6 +13,9 @@ import {
   roastDefaults,
   slug,
   fmtGrind,
+  useByFor,
+  isExpired,
+  localToday,
 } from './lib/dialin.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -24,6 +27,39 @@ export function initBeans({ gm, root, toast, getSettings }) {
 
   // ------------------------------------------------------------ helpers
   const settings = () => getSettings();
+  const useBy = batch => useByFor(batch, settings().freshDays ?? 60);
+  const latestBatch = (batches, beanId) =>
+    batches.filter(x => x.beanId === beanId).sort((x, y) => (y.createdAt || '').localeCompare(x.createdAt || ''))[0];
+
+  // Photos of the bag (several sides), shared by Add and Details.
+  function photoPicker(label = 'Photos of the bag') {
+    const ph = state.photos || [];
+    return `<div class="field"><span>${label} <span class="muted small">(up to 4: front, back, side…)</span></span>
+      <div class="photo-strip">${ph.map((p, i) => `<div class="ph"><img src="${p.url}" alt=""/><button class="ph-x" data-act="photo-remove" data-i="${i}" aria-label="Remove">×</button></div>`).join('')}
+      ${ph.length < 4 ? `<label class="ph add"><input type="file" accept="image/*" multiple data-photos hidden/><span>＋<br/><small>${ph.length ? 'Add side' : 'Add photo'}</small></span></label>` : ''}</div></div>`;
+  }
+  root.addEventListener('change', async e => {
+    if (!e.target.matches('[data-photos]')) return;
+    const files = [...e.target.files].slice(0, 4 - (state.photos || []).length);
+    const keep = readForm();
+    for (const f of files) {
+      try {
+        state.photos = [...(state.photos || []), { url: URL.createObjectURL(f), base64: await photoToBase64(f) }];
+      } catch {
+        toast(`Couldn't read ${f.name}.`, 'error');
+      }
+    }
+    render();
+    restoreForm(keep);
+  });
+  // Keep typed values across a re-render.
+  const readForm = () => [...root.querySelectorAll('input[id], input[data-k], input[data-bag], select[data-k]')].map(el => [el.id || el.dataset.k || el.dataset.bag, el.value]);
+  const restoreForm = vals => {
+    for (const [k, v] of vals) {
+      const el = root.querySelector(`#${CSS.escape(k)}`) || root.querySelector(`[data-k="${k}"]`) || root.querySelector(`[data-bag="${k}"]`);
+      if (el && el.type !== 'file') el.value = v;
+    }
+  };
   const show = (view, patch = {}) => {
     Object.assign(state, patch, { view });
     render();
@@ -76,15 +112,27 @@ export function initBeans({ gm, root, toast, getSettings }) {
         return;
       }
       beans.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      // Keep each coffee's use-by in step with its latest bag (the machine reads it).
+      for (const b of beans) {
+        const want = useBy(latestBatch(batches, b.id));
+        if ((b.useBy || '') !== want) {
+          b.useBy = want;
+          gm.putRecord('beans', b.id, b).catch(() => {});
+        }
+      }
+      const today = localToday();
       list.innerHTML = beans
         .map(b => {
+          const expired = isExpired(b, today);
           const latest = batches.filter(x => x.beanId === b.id).sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
           const mode = { dialing: 'Dialing in', dialed: 'Dialed in', recalibrate: 'Recalibrate', new: 'New', stored: 'Saved only' }[b.mode] || 'New';
-          return `<li class="with-thumb"><img class="thumb" alt="" src="${esc(thumbSrc(b))}"/><div class="grow"><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span></div>
+          return `<li class="with-thumb"><img class="thumb" alt="" src="${esc(thumbSrc(b))}"/><div class="grow"><div class="row"><strong>${esc(b.name)}</strong><span class="pill">${mode}</span>${expired ? '<span class="pill alarm">Past use-by</span>' : ''}</div>
             <div class="muted small">${esc([b.roaster, b.origin?.country, b.process, b.roastLevel].filter(Boolean).join(' · '))}</div>
             ${bestFor(b) ? `<div class="small">Best for: ${esc(bestFor(b))}</div>` : ''}
             ${latest ? `<div class="muted small">Bag roasted ${esc(latest.roastDate || 'date unknown')}, opened ${esc(latest.openedDate || '—')}</div>` : ''}
             ${b.dial?.grind != null ? `<div class="small">Next grind: <strong>${esc(fmtGrind(b.dial.grind, settings().grinder?.step))}</strong>${b.shots?.length ? ` · ${b.shots.length} rated shot${b.shots.length > 1 ? 's' : ''}` : ''}</div>` : ''}
+            ${b.useBy ? `<div class="small ${expired ? 'warn-text' : 'muted'}">Use by ${esc(b.useBy)}${b.useByIgnored ? ' (you chose to keep using it)' : ''}</div>` : ''}
+            ${expired ? `<div class="row gap"><button class="link" data-act="details" data-bag="1" data-id="${esc(b.id)}">New bag? Scan it ›</button><button class="link" data-act="keep-bag" data-id="${esc(b.id)}">Keep using this bag ›</button></div>` : ''}
             <button class="link" data-act="details" data-id="${esc(b.id)}">Details, look up again or delete ›</button>
             ${!b.profileId ? `<button class="link" data-act="resume" data-id="${esc(b.id)}">${b.mode === 'stored' ? 'Make an espresso profile anyway ›' : 'Set up a starting profile ›'}</button>` : ''}
             ${b.profileId && b.mode === 'dialed' ? `<button class="link" data-act="set-mode" data-mode="recalibrate" data-id="${esc(b.id)}">Recalibrate (ask after every shot again) ›</button>` : ''}
@@ -99,10 +147,10 @@ export function initBeans({ gm, root, toast, getSettings }) {
   function renderAdd() {
     const hasKey = !!aiSettings.apiKey;
     root.innerHTML = `<div class="card"><h2>Add a coffee</h2>
-      <p class="muted">Take a photo of the bag, type its name, or both. The assistant looks it up online.</p>
+      <p class="muted">Take photos of the bag (both sides if the dates are on the back), type its name, or both. The assistant looks it up online.</p>
       ${hasKey ? '' : '<p class="error small">Add your Anthropic API key in Settings to look coffees up. You can still fill in the details by hand.</p>'}
       <label class="field"><span>Coffee name</span><input id="bean-name" placeholder="e.g. Square Mile Red Brick" autocomplete="off"/></label>
-      <label class="field"><span>Photo of the bag</span><input id="bean-photo" type="file" accept="image/*" capture="environment"/></label>
+      ${photoPicker()}
       <div class="row gap">
         <button class="primary" data-act="research" ${hasKey ? '' : 'disabled'}>Look it up</button>
         <button data-act="manual">Fill in by hand</button>
@@ -130,7 +178,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
     const edit = state.view === 'edit';
     const bagFields = edit
       ? ''
-      : `<div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}</div>
+      : `<div class="grid2">${beanField('Roast date', 'roastDate', b.roastDate, 'type="date"')}${beanField('Use by / best before', 'bestBefore', b.bestBefore, 'type="date"')}</div>
+      ${beanField('Opened on', 'openedDate', b.openedDate || today(), 'type="date"')}
       ${beanField('Bag size (g)', 'bagSizeG', b.bagSizeG ?? 250, 'type="number" inputmode="numeric"')}`;
     const buttons = edit
       ? `<div class="row gap"><button class="primary" data-act="save-edit">Save changes</button>
@@ -141,6 +190,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
     root.innerHTML = `<div class="card"><div class="row spread"><h2>${edit ? esc(b.name) : 'Check the details'}</h2>
       ${b.confidence ? `<span class="pill ${b.confidence === 'high' ? 'ok' : b.confidence === 'low' ? 'warn' : ''}">${b.confidence} confidence</span>` : ''}</div>
       ${edit ? thumbBlock(b) : ''}
+      ${edit ? bagBlock() : ''}
       ${state.relooked ? '<p class="small ok-text">Looked up again. Check the new details below, then save. Your profile, grind and ratings are kept.</p>' : ''}
       ${state.relooked ? '' : `<p class="muted small">${edit ? 'Edit the details or look the coffee up again. Your profile, grind and rated shots are kept.' : "Correct anything that's wrong. Roast level matters most: it sets the salami plan."}</p>`}
       ${beanField('Coffee name', 'name', b.name, 'required')}
@@ -388,18 +438,20 @@ export function initBeans({ gm, root, toast, getSettings }) {
         id: `${id}-${Date.now().toString(36)}`.slice(0, 40),
         beanId: id,
         roastDate: b.roastDate || '',
+        bestBefore: b.bestBefore || '',
         openedDate: b.openedDate || today(),
         bagSizeG: b.bagSizeG || 250,
         createdAt: now,
       };
       state.batch = batch;
       if (existing) {
+        delete b.bestBefore;
         state.bean = { ...existing, ...b, id, salami: existing.salami, profileId: existing.profileId, mode: existing.mode, createdAt: existing.createdAt };
         done();
         return show('new-batch');
       }
-      const { openedDate, roastDate, bagSizeG, ...beanOnly } = b;
-      state.bean = { ...beanOnly, id, mode: 'new', createdAt: now, updatedAt: now };
+      const { openedDate, roastDate, bagSizeG, bestBefore, ...beanOnly } = b;
+      state.bean = { ...beanOnly, id, mode: 'new', useBy: useBy(batch), createdAt: now, updatedAt: now };
       await gm.putRecord('beans', id, state.bean);
       state.thumbJob = { id, promise: ensureThumb(state.bean).catch(() => null) };
       await gm.putRecord('batches', batch.id, batch);
@@ -411,10 +463,100 @@ export function initBeans({ gm, root, toast, getSettings }) {
     }
   }
 
-  async function openDetails(id) {
+  async function openDetails(id, focusBag = false) {
     const bean = await gm.getRecord('beans', id);
     if (!bean) throw new Error('That coffee no longer exists.');
-    show('edit', { bean: { ...emptyBean(), ...bean }, relooked: false });
+    const batch = latestBatch(await gm.getAll('batches').catch(() => []), id) || null;
+    show('edit', { bean: { ...emptyBean(), ...bean }, batch, relooked: false, photos: [], bagNote: '' });
+    if (focusBag) root.querySelector('#bag-block')?.scrollIntoView({ block: 'start' });
+  }
+
+  function readBagFields() {
+    const v = k => root.querySelector(`[data-bag="${k}"]`)?.value || '';
+    return { roastDate: v('roastDate'), bestBefore: v('bestBefore'), openedDate: v('openedDate') };
+  }
+
+  function bagBlock() {
+    const bt = state.batch || {};
+    const ub = useBy(bt);
+    const expired = isExpired({ useBy: ub });
+    return `<div class="bag-card${expired ? ' expired' : ''}" id="bag-block"><div class="row spread"><strong>Current bag</strong>${expired ? '<span class="pill alarm">Past use-by</span>' : ''}</div>
+      ${expired ? '<p class="small">Bought a new bag? Add photos of it (both sides) and tap <em>Read dates</em>, then <em>Save as new bag</em>.</p>' : ''}
+      <div class="grid2"><label class="field"><span>Roast date</span><input type="date" data-bag="roastDate" value="${esc(bt.roastDate || '')}"/></label>
+      <label class="field"><span>Use by / best before</span><input type="date" data-bag="bestBefore" value="${esc(bt.bestBefore || '')}"/></label></div>
+      <label class="field"><span>Opened on</span><input type="date" data-bag="openedDate" value="${esc(bt.openedDate || '')}"/></label>
+      <p class="small muted">${ub ? `Use by ${esc(ub)}${bt.bestBefore ? ' (printed on the bag)' : ` (${settings().freshDays ?? 60} days after roasting)`}.` : 'No use-by date: add the roast or use-by date to get a warning when it gets old.'}</p>
+      ${state.bagNote ? `<p class="small warn-text">${esc(state.bagNote)}</p>` : ''}
+      ${photoPicker('Photos of the bag')}
+      <div class="row gap"><button class="small-btn" data-act="bag-scan" ${aiSettings.apiKey ? '' : 'disabled title="Add your API key in Settings"'}>Read dates from photos</button>
+      <button class="small-btn" data-act="bag-new">Save as new bag</button></div></div>`;
+  }
+
+  async function scanBag(btn) {
+    const photos = (state.photos || []).map(p => p.base64);
+    if (!photos.length) return toast('Add a photo of the bag first.', 'error');
+    const keep = readForm();
+    const done = busy(btn, 'Reading…');
+    try {
+      const found = await readBag({ photos });
+      done();
+      render();
+      restoreForm(keep);
+      const set = (k, v) => {
+        const el = root.querySelector(`[data-bag="${k}"]`);
+        if (el && v) el.value = v;
+      };
+      set('roastDate', found.roastDate);
+      set('bestBefore', found.bestBefore);
+      const got = [found.roastDate && `roasted ${found.roastDate}`, found.bestBefore && `use by ${found.bestBefore}`].filter(Boolean).join(', ');
+      toast(got ? `Read: ${got}. Check, then save.` : 'No dates found on the photos.', got ? 'ok' : 'error');
+      if (found.note) {
+        state.bagNote = found.note;
+        const p = document.createElement('p');
+        p.className = 'small warn-text';
+        p.textContent = found.note;
+        root.querySelector('#bag-block .row.gap')?.before(p);
+      }
+    } catch (err) {
+      done();
+      toast(err.message, 'error');
+    }
+  }
+
+  // Bag dates changed in Details: update the latest bag (or create the first one).
+  async function saveBagEdits(bean) {
+    const f = readBagFields();
+    const bt = state.batch;
+    const changed = bt ? ['roastDate', 'bestBefore', 'openedDate'].some(k => (bt[k] || '') !== f[k]) : f.roastDate || f.bestBefore;
+    if (!changed) return bean;
+    const batch = bt
+      ? { ...bt, ...f }
+      : { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, bagSizeG: 250, createdAt: new Date().toISOString(), ...f, openedDate: f.openedDate || today() };
+    await gm.putRecord('batches', batch.id, batch);
+    state.batch = batch;
+    const reset = bt && (bt.bestBefore || '') !== f.bestBefore;
+    return { ...bean, useBy: useBy(batch), useByIgnored: reset ? false : bean.useByIgnored };
+  }
+
+  async function saveNewBag(btn) {
+    const f = readBagFields();
+    if (!f.roastDate && !f.bestBefore) return toast('Add the roast or use-by date of the new bag (or read them from photos).', 'error');
+    const done = busy(btn, 'Saving…');
+    try {
+      const bean = await gm.getRecord('beans', state.bean.id);
+      const now = new Date().toISOString();
+      const batch = { id: `${bean.id}-${Date.now().toString(36)}`.slice(0, 40), beanId: bean.id, roastDate: f.roastDate, bestBefore: f.bestBefore, openedDate: f.openedDate && f.openedDate !== state.batch?.openedDate ? f.openedDate : today(), bagSizeG: state.batch?.bagSizeG || 250, createdAt: now };
+      await gm.putRecord('batches', batch.id, batch);
+      const updated = { ...bean, useBy: useBy(batch), useByIgnored: false, mode: bean.profileId && bean.mode === 'dialed' ? 'dialing' : bean.mode, updatedAt: now };
+      if (updated.dial) updated.dial = { ...updated.dial, goodStreak: 0 };
+      await gm.putRecord('beans', bean.id, updated);
+      done();
+      toast(`New bag of ${bean.name} saved${bean.profileId ? '. Rating prompts are on again for the first shots' : ''}.`, 'ok');
+      show('list', { photos: [] });
+    } catch (err) {
+      done();
+      toast(err.message, 'error');
+    }
   }
 
   async function saveEdit(btn) {
@@ -426,6 +568,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
       // Keep everything the dial-in loop owns; only the descriptive fields change.
       const merged = { ...current, ...b, id: current.id || b.id, profileId: current.profileId, mode: current.mode, dial: current.dial, shots: current.shots, salami: current.salami, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
       delete merged.roastLevelGuessed;
+      Object.assign(merged, await saveBagEdits(merged));
       if (!merged.thumb) Object.assign(merged, await thumbFields(merged));
       await gm.putRecord('beans', merged.id, merged);
       let note = '';
@@ -508,8 +651,8 @@ export function initBeans({ gm, root, toast, getSettings }) {
   }
 
   async function confirmBatch() {
-    const bean = { ...state.bean, mode: state.bean.profileId ? 'dialing' : state.bean.mode, updatedAt: new Date().toISOString() };
-    const { openedDate, roastDate, bagSizeG, ...beanOnly } = bean;
+    const bean = { ...state.bean, mode: state.bean.profileId ? 'dialing' : state.bean.mode, useBy: useBy(state.batch), useByIgnored: false, updatedAt: new Date().toISOString() };
+    const { openedDate, roastDate, bagSizeG, bestBefore, ...beanOnly } = bean;
     await gm.putRecord('beans', bean.id, beanOnly);
     await gm.putRecord('batches', state.batch.id, state.batch);
     if (bean.profileId) {
@@ -632,16 +775,28 @@ export function initBeans({ gm, root, toast, getSettings }) {
         state.run = null;
         show('list');
       }
-      else if (act === 'add') show('add');
+      else if (act === 'add') show('add', { photos: [] });
+      else if (act === 'photo-remove') {
+        const keep = readForm();
+        state.photos.splice(i, 1);
+        render();
+        restoreForm(keep);
+      } else if (act === 'keep-bag') {
+        const bean = await gm.getRecord('beans', btn.dataset.id);
+        await gm.putRecord('beans', bean.id, { ...bean, useByIgnored: true, updatedAt: new Date().toISOString() });
+        toast("OK, no more use-by warnings for this bag.", 'ok');
+        render();
+      } else if (act === 'bag-scan') await scanBag(btn);
+      else if (act === 'bag-new') await saveNewBag(btn);
       else if (act === 'manual') show('review', { bean: emptyBean(root.querySelector('#bean-name')?.value) });
       else if (act === 'research') {
         const name = root.querySelector('#bean-name').value.trim();
-        const file = root.querySelector('#bean-photo').files[0];
-        if (!name && !file) return toast('Type a name or add a photo.', 'error');
+        const photos = (state.photos || []).map(p => p.base64);
+        if (!name && !photos.length) return toast('Type a name or add a photo.', 'error');
         const done = busy(btn, 'Looking it up… (up to a minute)');
         try {
-          const photoBase64 = file ? await photoToBase64(file) : null;
-          const bean = await researchBean({ name, photoBase64 });
+          const bean = await researchBean({ name, photos });
+          state.photos = [];
           done();
           show('review', { bean });
         } catch (err) {
@@ -654,7 +809,7 @@ export function initBeans({ gm, root, toast, getSettings }) {
         toast(`${state.bean.name} saved. No espresso profile was made.`, 'ok');
         show('list');
       }
-      else if (act === 'details') await openDetails(btn.dataset.id);
+      else if (act === 'details') await openDetails(btn.dataset.id, !!btn.dataset.bag);
       else if (act === 'thumb-name' || act === 'thumb-logo') {
         const b = readReview();
         const done = busy(btn, act === 'thumb-logo' ? 'Fetching…' : 'Drawing…');

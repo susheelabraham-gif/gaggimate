@@ -132,3 +132,32 @@ test('roaster thumbnails: initials, stable colours and logo links', async () => 
   assert.equal(normalizeBean({ logoUrl: 'http://x.com/a.png' }).logoUrl, '');
   assert.equal(normalizeBean({ logoUrl: 'javascript:alert(1)' }).logoUrl, '');
 });
+
+test('reading a bag sends every photo, no web search, and keeps only real dates', async () => {
+  const { readBag } = await import('../dialin/www/lib/ai.js');
+  aiSettings.apiKey = 'sk-test';
+  let body;
+  const fetchFn = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ content: [{ type: 'text', text: '{"name":"San Isidro","roastDate":"2026-11-10","bestBefore":"31/05/2027","bagSizeG":250,"note":null}' }] }) };
+  };
+  const r = await readBag({ photos: ['AAA', 'BBB'], fetchFn });
+  assert.equal(body.messages[0].content.filter(c => c.type === 'image').length, 2);
+  assert.equal(body.tools, undefined);
+  assert.equal(r.roastDate, '2026-11-10');
+  assert.equal(r.bestBefore, '');
+  assert.equal(r.bagSizeG, 250);
+});
+
+test('research takes several photos of one bag', async () => {
+  aiSettings.apiKey = 'sk-test';
+  let body;
+  const fetchFn = async (url, opts) => {
+    body = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ content: [{ type: 'text', text: '{"name":"X","roastLevel":"light","bestBefore":"2027-05-31"}' }] }) };
+  };
+  const b = await researchBean({ photos: ['A', 'B', 'C'], fetchFn });
+  assert.equal(body.messages[0].content.filter(c => c.type === 'image').length, 3);
+  assert.match(body.messages[0].content.at(-1).text, /3 photos/);
+  assert.equal(b.bestBefore, '2027-05-31');
+});

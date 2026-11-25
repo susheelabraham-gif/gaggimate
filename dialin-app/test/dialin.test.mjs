@@ -186,3 +186,16 @@ test('salami cups are flow-controlled and last long enough to swap', () => {
   assert.equal(fmtGrind(14.5, 0.5), '14.5');
   assert.equal(fmtGrind(15, 0.5), '15');
 });
+
+test('use-by: printed date wins, else roast date + days, else none', async () => {
+  const { useByFor, isExpired } = await import('../dialin/www/lib/dialin.js');
+  assert.equal(useByFor({ roastDate: '2026-09-01', bestBefore: '2027-03-31' }, 60), '2027-03-31');
+  assert.equal(useByFor({ roastDate: '2026-09-01' }, 60), '2026-10-31');
+  assert.equal(useByFor({ roastDate: '2026-09-01' }, 0), '');
+  assert.equal(useByFor({}, 60), '');
+  assert.equal(useByFor(undefined, 60), '');
+  assert.equal(isExpired({ useBy: '2026-11-24' }, '2026-11-25'), true);
+  assert.equal(isExpired({ useBy: '2026-11-25' }, '2026-11-25'), false);
+  assert.equal(isExpired({ useBy: '2026-11-01', useByIgnored: true }, '2026-11-25'), false);
+  assert.equal(isExpired({ useBy: '' }, '2026-11-25'), false);
+});

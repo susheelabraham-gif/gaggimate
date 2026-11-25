@@ -13,6 +13,7 @@ const esc = s =>
 let pluginInfo = null;
 let appSettings = {
   dose: 18,
+  freshDays: 60,
   grinder: { brand: 'DF64', model: 'DF64 Gen 2', step: 0.5, baseline: null, finerIsLower: true },
 };
 const GRINDER_PRESETS = { 'DF64 Gen 2': 0.5 };
@@ -261,6 +262,8 @@ function renderAppSettings() {
       <span class="muted small">Used to suggest a starting grind for new coffees.</span></label>
     <label class="check"><input type="checkbox" name="finerIsLower" ${g.finerIsLower ? 'checked' : ''}/> <span>Lower numbers are finer</span></label>
     <label><span>Usual dose</span><span class="input"><input name="dose" type="number" step="0.5" value="${appSettings.dose}" inputmode="decimal"/><span class="unit">g</span></span></label>
+    <label><span>Coffee keeps for</span><span class="input"><input name="freshDays" type="number" step="1" min="0" value="${appSettings.freshDays ?? 60}" inputmode="numeric"/><span class="unit">days</span></span>
+      <span class="muted small">Days after roasting, used when the bag has no use-by date printed. 0 = only warn on printed dates.</span></label>
     <button type="submit" class="primary">Save</button>`;
   $('#aisettings').innerHTML = `
     <label><span>Anthropic API key</span><span class="input"><input name="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(aiSettings.apiKey || '')}" style="width:170px;text-align:left"/></span></label>
@@ -277,6 +280,7 @@ $('#appsettings').addEventListener('submit', async e => {
   appSettings = {
     ...appSettings,
     dose: Number(f.dose) || 18,
+    freshDays: f.freshDays === '' ? 60 : Math.max(0, Math.round(Number(f.freshDays) || 0)),
     grinder: {
       ...appSettings.grinder,
       model,

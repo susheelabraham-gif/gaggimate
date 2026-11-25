@@ -54,7 +54,7 @@ export const aiSettings = {
 };
 
 const INSTRUCTIONS = `You identify specialty coffee beans for an espresso dial-in assistant.
-Use the photo of the bag and/or the name given. Search the web for the roaster's own product page first, then other sources (reviews, forums such as Reddit, coffee blogs) describing how this coffee behaves as espresso.
+Use the photos of the bag and/or the name given. Several photos may show different sides of the same bag (front with the name, back with roast and use-by dates): combine them. Search the web for the roaster's own product page first, then other sources (reviews, forums such as Reddit, coffee blogs) describing how this coffee behaves as espresso.
 Also find which brew methods the roaster recommends this coffee for (espresso, milk drinks, americano/long black, pour-over, Chemex, AeroPress, French press, cold brew) and whether it is an espresso, filter or omni roast. Rate a method "recommended" when the roaster or several sources recommend it, "suitable" when it is reasonable for this roast, "not recommended" when the roaster or sources advise against it.
 Only report what the label or sources say; use null for anything unknown. Never invent a roast date.
 Reply with ONE JSON object and nothing else, in this shape:
@@ -68,6 +68,7 @@ Reply with ONE JSON object and nothing else, in this shape:
   "roastLevel": "${ROAST_LEVELS.join('"|"')}",
   "tastingNotes": [string],
   "roastDate": "YYYY-MM-DD"|null,       // only if printed on the bag
+  "bestBefore": "YYYY-MM-DD"|null,      // use-by / best-before / expiry date printed on the bag; month-only dates mean the month's last day
   "bagSizeG": number|null,
   "recipe": {"dose": number|null, "yield": number|null, "ratio": number|null, "timeS": number|null, "tempC": number|null, "source": string|null} | null,
   "community": [{"summary": string, "source": string}],   // at most 4, about espresso
@@ -132,6 +133,7 @@ export function normalizeBean(raw) {
     roastLevelGuessed: !ROAST_LEVELS.includes(b.roastLevel),
     tastingNotes: Array.isArray(b.tastingNotes) ? b.tastingNotes.slice(0, 8).map(String) : [],
     roastDate: /^\d{4}-\d{2}-\d{2}$/.test(b.roastDate || '') ? b.roastDate : '',
+    bestBefore: /^\d{4}-\d{2}-\d{2}$/.test(b.bestBefore || '') ? b.bestBefore : '',
     bagSizeG: num(b.bagSizeG),
     recipe,
     community: Array.isArray(b.community) ? b.community.slice(0, 4) : [],
@@ -146,16 +148,22 @@ export function normalizeBean(raw) {
   };
 }
 
-export async function researchBean({ name, photoBase64, fetchFn = fetch }) {
+function imageBlocks(photos) {
+  return photos.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
+}
+
+export async function researchBean({ name, photoBase64, photos = [], fetchFn = fetch }) {
   const apiKey = aiSettings.apiKey;
   if (!apiKey) throw new Error('Add your Anthropic API key in Settings first.');
-  const content = [];
-  if (photoBase64) {
-    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: photoBase64 } });
-  }
+  const all = [...(photoBase64 ? [photoBase64] : []), ...photos].slice(0, 4);
+  const content = imageBlocks(all);
   content.push({
     type: 'text',
-    text: name ? `Coffee: ${name}` : 'Identify the coffee in this photo of the bag.',
+    text: name
+      ? `Coffee: ${name}`
+      : all.length > 1
+        ? `Identify the coffee in these ${all.length} photos of the same bag.`
+        : 'Identify the coffee in this photo of the bag.',
   });
 
   const res = await fetchFn(API_URL, {
@@ -188,4 +196,48 @@ export async function researchBean({ name, photoBase64, fetchFn = fetch }) {
     }
   }
   throw new Error('Could not read the AI reply. Try again or fill in the details by hand.');
+}
+
+const BAG_INSTRUCTIONS = `You read the printed details on photos of a coffee bag (possibly several sides of one bag).
+Reply with ONE JSON object and nothing else:
+{"name": string|null, "roaster": string|null,
+ "roastDate": "YYYY-MM-DD"|null,      // roast (or grind) date printed on the bag
+ "bestBefore": "YYYY-MM-DD"|null,     // use-by / best-before / expiry; a month-only date means that month's last day
+ "bagSizeG": number|null,
+ "note": string|null}                 // say here if a date was hard to read or ambiguous (e.g. 03/04/26)
+Use null for anything not printed. Never guess a date.`;
+
+// Read just the dates (and name) from bag photos: no web search, so it's quick and cheap.
+export async function readBag({ photos, fetchFn = fetch }) {
+  const apiKey = aiSettings.apiKey;
+  if (!apiKey) throw new Error('Add your Anthropic API key in Settings first.');
+  if (!photos?.length) throw new Error('Add a photo of the bag first.');
+  const res = await fetchFn(API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: aiSettings.model,
+      max_tokens: 600,
+      system: BAG_INSTRUCTIONS,
+      messages: [{ role: 'user', content: [...imageBlocks(photos.slice(0, 4)), { type: 'text', text: 'Read this bag.' }] }],
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error?.message || `AI request failed (${res.status})`);
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  const raw = extractJson(text);
+  const date = v => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
+  return {
+    name: raw.name || '',
+    roaster: raw.roaster || '',
+    roastDate: date(raw.roastDate),
+    bestBefore: date(raw.bestBefore),
+    bagSizeG: typeof raw.bagSizeG === 'number' && raw.bagSizeG > 0 ? raw.bagSizeG : null,
+    note: typeof raw.note === 'string' ? raw.note.slice(0, 200) : '',
+  };
 }

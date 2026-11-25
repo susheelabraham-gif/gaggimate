@@ -149,6 +149,7 @@ void DialInPlugin::setup(Controller *_controller, PluginManager *_pluginManager)
     installApp();
     loadState();
     pluginManager->on("evt:history-shot-saved", [this](Event const &event) { onShotSaved(event.getInt("id")); });
+    pluginManager->on("profiles:profile:select", [this](Event const &) { expiryDirty = true; });
     ESP_LOGI(TAG, "Dial-in plugin %s ready (storage: %s)", DIALIN_PLUGIN_VERSION, storage() ? "yes" : "no SD card");
 }
 
@@ -692,14 +693,71 @@ void DialInPlugin::handleData(AsyncWebServerRequest *request, const std::string 
             sendError(request, 500, "Could not finish saving the record.");
             return;
         }
+        expiryDirty = true;
         request->send(200, "application/json", "{\"ok\":true}");
     } else if (method == HTTP_DELETE) {
         if (fs->exists(path))
             fs->remove(path);
+        expiryDirty = true;
         request->send(200, "application/json", "{\"ok\":true}");
     } else {
         sendError(request, 405, "Method not allowed.");
     }
+}
+
+// ---------------------------------------------------------------- use-by date
+
+bool DialInPlugin::isPastDate(const String &useBy, const String &today) {
+    // ISO dates compare correctly as strings.
+    if (useBy.length() != 10 || today.length() != 10 || useBy[4] != '-' || useBy[7] != '-')
+        return false;
+    return useBy < today;
+}
+
+void DialInPlugin::loop() {
+    const unsigned long now = millis();
+    // Re-check after changes, and every 10 minutes for the date rolling over or the clock being set.
+    if (expiryDirty || now - lastExpiryCheck > 10UL * 60 * 1000) {
+        expiryDirty = false;
+        lastExpiryCheck = now;
+        refreshExpiry();
+    }
+}
+
+void DialInPlugin::refreshExpiry() {
+    String found;
+    fs::FS *fs = storage();
+    time_t t = time(nullptr);
+    struct tm local;
+    localtime_r(&t, &local);
+    if (fs != nullptr && controller != nullptr && local.tm_year + 1900 >= 2025) { // clock not set yet: don't guess
+        char today[11];
+        strftime(today, sizeof(today), "%Y-%m-%d", &local);
+        const String profileId = controller->getProfileManager()->getSelectedProfile().id;
+        File d = fs->open(String(DATA_DIR) + "/beans", "r");
+        if (d && d.isDirectory() && profileId.length()) {
+            File f = d.openNextFile();
+            while (f && found.isEmpty()) {
+                if (!f.isDirectory()) {
+                    JsonDocument filter;
+                    filter["id"] = true;
+                    filter["profileId"] = true;
+                    filter["useBy"] = true;
+                    filter["useByIgnored"] = true;
+                    JsonDocument doc;
+                    if (deserializeJson(doc, f, DeserializationOption::Filter(filter)) == DeserializationError::Ok &&
+                        profileId == (doc["profileId"] | "") && !(doc["useByIgnored"] | false) &&
+                        isPastDate(doc["useBy"] | "", today))
+                        found = doc["id"] | "coffee";
+                }
+                f.close();
+                f = d.openNextFile();
+            }
+        }
+    }
+    if (found != expiredBean)
+        ESP_LOGI(TAG, "Coffee past use-by: %s", found.length() ? found.c_str() : "none");
+    expiredBean = found;
 }
 
 // ---------------------------------------------------------------- roaster logo

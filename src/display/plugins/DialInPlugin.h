@@ -28,13 +28,20 @@ struct Profile;
 class DialInPlugin : public Plugin {
   public:
     void setup(Controller *controller, PluginManager *pluginManager) override;
-    void loop() override {}
+    void loop() override;
 
     // Called by WebUIPlugin::setupServer() before its catch-all handler.
     void attachRoutes(AsyncWebServer &server);
 
     // True while a shot from a coffee being dialed in has no tasting feedback yet.
     bool isFeedbackPending() const { return pendingShotId >= 0; }
+
+    // True when the active profile belongs to a coffee past its use-by date (the
+    // date the app stores as "useBy" on the coffee). Cached; cheap to call.
+    bool isCoffeeExpired() const { return expiredBean.length() > 0; }
+
+    // Exposed for tests: "YYYY-MM-DD" strictly before today's date.
+    static bool isPastDate(const String &useBy, const String &today);
 
     // Exposed for tests.
     static dialin::ProfileSpec toSpec(const Profile &profile);
@@ -55,6 +62,7 @@ class DialInPlugin : public Plugin {
     void handleFeedback(AsyncWebServerRequest *request, const std::string &body);
     void onShotSaved(int shotId);
     String dialingBeanFor(const String &profileId, const String &profileLabel);
+    void refreshExpiry();
     void loadState();
     void saveState();
     void serveIndex(AsyncWebServerRequest *request);
@@ -73,6 +81,10 @@ class DialInPlugin : public Plugin {
     dialin::SafetyLimits limits{};
     int pendingShotId = -1;
     String pendingBean;
+
+    String expiredBean;
+    volatile bool expiryDirty = true;
+    unsigned long lastExpiryCheck = 0;
 
     enum LogoState { LOGO_IDLE, LOGO_PENDING, LOGO_DONE, LOGO_ERROR };
     volatile int logoState = LOGO_IDLE;

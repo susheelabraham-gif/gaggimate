@@ -308,3 +308,22 @@ export function nextStep({ shot, feedback, dial, grinder, temperature, limits = 
     dial: { grind: nextGrind ?? fromGrind, step, lastDir: grindDir || dial?.lastDir || 0, goodStreak },
   };
 }
+
+// The date a bag should be used by: the printed use-by/best-before date, else
+// roast date + freshDays (0 = off). Returns 'YYYY-MM-DD' or ''.
+export function useByFor(batch, freshDays = 60) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(batch?.bestBefore || '')) return batch.bestBefore;
+  if (!freshDays || !/^\d{4}-\d{2}-\d{2}$/.test(batch?.roastDate || '')) return '';
+  const d = new Date(`${batch.roastDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(freshDays));
+  return d.toISOString().slice(0, 10);
+}
+
+export function localToday(now = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+export function isExpired(bean, today = localToday()) {
+  return !!bean?.useBy && !bean.useByIgnored && bean.useBy < today;
+}

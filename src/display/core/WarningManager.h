@@ -15,6 +15,7 @@ enum WarningType {
     WARNING_BACKFLUSH,
     WARNING_DESCALING,
     WARNING_DIALIN_FEEDBACK, // a Dial-in shot still needs tasting feedback
+    WARNING_DIALIN_EXPIRED,  // the active coffee is past its use-by date
     WARNING_TYPE_COUNT
 };
 

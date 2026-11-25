@@ -16,6 +16,7 @@ const WarningInfo WARNING_INFO[WARNING_TYPE_COUNT] = {
     {"scaleBattery", "Scale battery low"}, {"temperature", "Temperature not stable"},
     {"backflush", "Backflush due"},        {"descaling", "Descaling due"},
     {"dialinFeedback", "Rate your last shot in Dial-in"},
+    {"dialinExpired", "Coffee past use-by date (new bag? scan it in Dial-in)"},
 };
 } // namespace
 
@@ -77,6 +78,7 @@ void WarningManager::evaluate() {
     active[WARNING_BACKFLUSH] = selectedProfile != BACKFLUSH_PROFILE_ID && CleaningSchedulePlugin::isBackflushDue(settings);
     active[WARNING_DESCALING] = selectedProfile != DESCALING_PROFILE_ID && CleaningSchedulePlugin::isDescalingDue(settings);
     active[WARNING_DIALIN_FEEDBACK] = DialIn.isFeedbackPending();
+    active[WARNING_DIALIN_EXPIRED] = DialIn.isCoffeeExpired();
 
     level[WARNING_WATER] = settings.getWarnWaterLevel();
     level[WARNING_FLUSH] = settings.getWarnFlush();
@@ -88,6 +90,7 @@ void WarningManager::evaluate() {
     level[WARNING_DESCALING] = settings.getWarnDescaling();
     // Error level: pressing brew shows the confirm screen (Brew anyway / Cancel).
     level[WARNING_DIALIN_FEEDBACK] = WARNING_LEVEL_ERROR;
+    level[WARNING_DIALIN_EXPIRED] = WARNING_LEVEL_ERROR;
 }
 
 bool WarningManager::isWarn(WarningType type) const { return active[type] && level[type] == WARNING_LEVEL_WARN; }
